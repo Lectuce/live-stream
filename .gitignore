@@ -1,0 +1,5 @@
+live-stream
+*.log
+.idea/
+.vscode/
+.env

@@ -1,0 +1,20 @@
+mysql:
+  user: yujun
+  password: 161413
+  host: 127.0.0.1
+  port: 3306
+  dbname: live_stream
+  charset: utf8mb4
+
+redis:
+  addr: 127.0.0.1:6379
+  password: ""
+  db: 0
+  username: ""
+
+kafka:
+  brokers:
+  - "127.0.0.1:9092"
+  group_id: "live-danmu-consumer"
+  danmu_topic: "danmu_topic"
+  
