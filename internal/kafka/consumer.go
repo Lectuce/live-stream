@@ -3,16 +3,46 @@ package kafka
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"live-stream/internal/config"
 	"live-stream/internal/model"
+	"live-stream/internal/repo"
+	"time"
 
 	"log"
 
 	"github.com/segmentio/kafka-go"
 )
 
-var DanmuOutChan = make(chan model.Danma, 1024)
+func commitWithRetry(ctx context.Context, reader *kafka.Reader, msg kafka.Message) error {
+	for {
+		err := reader.CommitMessages(ctx, msg)
+		if err == nil {
+			log.Printf(
+				"commit kafka message success, partition=%d offset=%d",
+				msg.Partition,
+				msg.Offset,
+			)
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		log.Printf(
+			"commit kafka message failed, partition=%d offset=%d: %v",
+			msg.Partition,
+			msg.Offset,
+			err,
+		)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+
+	}
+}
 
 func StartKafkaConsumer(ctx context.Context) error {
 	reader := kafka.NewReader(kafka.ReaderConfig{
@@ -30,7 +60,7 @@ func StartKafkaConsumer(ctx context.Context) error {
 	}()
 	log.Printf("danmu consumer started, groupId=%s, topic=%s", config.GlobalConfig.Kafka.GroupID, config.GlobalConfig.Kafka.DanmuTopic)
 	for {
-		msg, err := reader.ReadMessage(ctx)
+		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
 			// 上下文取消，退出
 			if ctx.Err() != nil {
@@ -40,17 +70,56 @@ func StartKafkaConsumer(ctx context.Context) error {
 			log.Printf("read kafka message err: %v\n", err)
 			continue
 		}
-		fmt.Printf("message at topic/partition/offset %v/%v/%v: %s = %s\n", msg.Topic, msg.Partition, msg.Offset, string(msg.Key), string(msg.Value))
 		var dm model.Danma
 		err = json.Unmarshal(msg.Value, &dm)
 		if err != nil {
-			log.Printf("unmarshal danmu failed, raw=%s, err=%v", string(msg.Value), err)
+			log.Printf(
+				"invalid kafka message, topic=%s partition=%d offset=%d: %v",
+				msg.Topic,
+				msg.Partition,
+				msg.Offset,
+				err,
+			)
+			if err := commitWithRetry(ctx, reader, msg); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return err
+			}
 			continue
 		}
 
-		DanmuOutChan <- dm
+		for {
+			_, err := repo.CreateDanma(ctx, &dm)
+			if err == nil {
+				log.Printf(
+					"save danmu success, partition=%d offset=%d",
+					msg.Partition,
+					msg.Offset,
+				)
+				break
+			}
+			log.Printf(
+				"save danmu failed, partition=%d offset=%d: %v",
+				msg.Partition,
+				msg.Offset,
+				err,
+			)
 
-		log.Printf("consume danma: room=%d, user=%d, content=%s", dm.RoomID, dm.UserID, dm.Content)
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(time.Second):
+			}
+		}
+
+		err = commitWithRetry(ctx, reader, msg)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
 
 	}
 

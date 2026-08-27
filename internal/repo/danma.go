@@ -17,7 +17,7 @@ func CreateDanma(ctx context.Context, danma *model.Danma) (*model.Danma, error) 
 	results := gorm.WithResult()
 	err := gorm.G[model.Danma](dao.SC.Db, results).Create(ctx, danma)
 	if err != nil {
-		panic(fmt.Errorf("fatal error create user: %w", err))
+		return nil, fmt.Errorf("fatal error create user: %w", err)
 	}
 	if results.RowsAffected == 0 {
 		return nil, fmt.Errorf("no rows inserted")

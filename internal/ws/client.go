@@ -1,10 +1,14 @@
 package ws
 
 import (
+	"encoding/json"
 	"fmt"
+	"live-stream/internal/dao"
 	"live-stream/internal/kafka"
 	"live-stream/internal/model"
 	"log"
+
+	"github.com/google/uuid"
 
 	"github.com/gorilla/websocket"
 )
@@ -41,15 +45,27 @@ func (c *Client) readPump() {
 			}
 			break
 		}
+		msg.MessageID = uuid.NewString()
 		msg.UserID = c.UserID
 		msg.RoomID = c.RoomID
 		// 广播给在线用户
-		c.hub.Broadcast <- msg
+		// c.hub.Broadcast <- msg
+		// 发布redis
+		payload, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("marshal websocket message failed: %v\n", err)
+			continue
+		}
+		err = dao.Publish(c.hub.ctx, dao.DanmuChannel, string(payload))
+		if err != nil {
+			log.Printf("publish danmu to redis failed: %v\n", err)
+		}
 		// 写入kafka
 		dm := model.Danma{
-			RoomID:  msg.RoomID,
-			UserID:  msg.UserID,
-			Content: msg.Content,
+			MessageID: msg.MessageID,
+			RoomID:    msg.RoomID,
+			UserID:    msg.UserID,
+			Content:   msg.Content,
 		}
 		var key []byte
 		key = fmt.Appendf(key, "%d", msg.RoomID)

@@ -25,22 +25,19 @@ func main() {
 
 	defer kafka.Close()
 	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		if err := ws.StartRedisSubscriber(ctx, hub); err != nil {
+			log.Printf("redis subscriber exit: %v", err)
+		}
+	}()
+
 	go func() {
 		if err := kafka.StartKafkaConsumer(ctx); err != nil {
 			log.Printf("kafka consumer exit: %v", err)
 		}
 	}()
 
-	go func() {
-		for dm := range kafka.DanmuOutChan {
-			// main同时持有hub和kafka通道，在这里转换消息，推给hub
-			hub.Broadcast <- ws.Message{
-				RoomID:  dm.RoomID,
-				UserID:  dm.UserID,
-				Content: dm.Content,
-			}
-		}
-	}()
 	r := gin.Default()
 
 	r.GET("/ws", func(c *gin.Context) {
