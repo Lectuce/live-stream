@@ -3,6 +3,7 @@ package dao
 import (
 	"context"
 	"live-stream/internal/config"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -40,4 +41,23 @@ func Subscribe(ctx context.Context, channel string) (*redis.PubSub, error) {
 	}
 	return pubSub, nil
 
+}
+
+func SetSession(ctx context.Context, key string, userID uint64, ttl time.Duration) error {
+	return SC.Redis.Set(ctx, key, userID, ttl).Err()
+}
+
+// GetSession 查询session，返回userID，不存在返回0
+func GetSession(ctx context.Context, key string) (uint64, error) {
+	val, err := SC.Redis.Get(ctx, key).Uint64()
+	if err == redis.Nil {
+		// key不存在，会话失效
+		return 0, nil
+	}
+	return val, err
+}
+
+// DelSession 删除session（登出时用）
+func DelSession(ctx context.Context, key string) error {
+	return SC.Redis.Del(ctx, key).Err()
 }

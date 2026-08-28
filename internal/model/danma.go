@@ -1,9 +1,12 @@
 package model
 
+import "time"
+
 type Danma struct {
-	ID        uint64 `json:"-" gorm:"primaryKey;autoIncrement"`
-	MessageID string `json:"message_id" gorm:"size:36;uniqueIndex;not null"`
-	RoomID    int64  `json:"room_id"`
-	UserID    int64  `json:"user_id"`
-	Content   string `json:"content" gorm:"type:text"`
+	ID        uint64    `json:"id" gorm:"primaryKey;autoIncrement"`
+	MessageID string    `json:"message_id" gorm:"size:36;uniqueIndex;not null"`
+	RoomID    uint64    `json:"room_id" gorm:"index:idx_room_history,priority:1;not null"`
+	UserID    uint64    `json:"user_id" gorm:"index;not null"`
+	Content   string    `json:"content" gorm:"type:varchar(500);not null"`
+	CreatedAt time.Time `json:"created_at" gorm:"index:idx_room_history,priority:2"`
 }

@@ -5,6 +5,7 @@ import (
 	"live-stream/internal/config"
 	"live-stream/internal/dao"
 	"live-stream/internal/kafka"
+	"live-stream/internal/rousters"
 	"live-stream/internal/ws"
 	"log"
 	"os"
@@ -40,9 +41,7 @@ func main() {
 
 	r := gin.Default()
 
-	r.GET("/ws", func(c *gin.Context) {
-		ws.ServeWs(hub, c)
-	})
+	rousters.SetUpRousters(r, hub)
 
 	// 服务协程启动gin
 	serverExit := make(chan struct{})

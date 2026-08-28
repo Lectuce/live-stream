@@ -1,6 +1,6 @@
 mysql:
   user: yujun
-  password: 161413
+  password: "161413"
   host: "2402:4e00:c011:2600:3052:ef08:8c34:0"
   port: 3306
   dbname: live_stream
@@ -11,13 +11,15 @@ redis:
   password: ""
   db: 0
   username: ""
-# redis:
-#   host: "[2402:4e00:c011:2600:3052:ef08:8c34:0]"
-#   port: 6379
+
 kafka:
   brokers:
     - "[2402:4e00:c011:2600:3052:ef08:8c34:0]:9092"
   group_id: "live-danmu-consumer"
   danmu_topic: "danmu_topic"
+
+stream_list:
+  count: 20
+
 
   
