@@ -1,6 +1,8 @@
 package ws
 
 import (
+	"live-stream/internal/auth"
+	"live-stream/internal/repo"
 	"net/http"
 	"strconv"
 
@@ -19,21 +21,29 @@ var upgrader = websocket.Upgrader{
 
 func ServeWs(hub *Hub, c *gin.Context) {
 	roomIDStr := c.Query("room_id")
-	userIDStr := c.Query("user_id")
-	rid, err := strconv.ParseInt(roomIDStr, 10, 64)
+	rid, err := strconv.ParseUint(roomIDStr, 10, 64)
 	if err != nil {
 		c.AbortWithStatusJSON(400, gin.H{
 			"msg": "room_id 格式错误",
 		})
 		return
 	}
-	uid, err := strconv.ParseInt(userIDStr, 10, 64)
-	if err != nil {
-		c.AbortWithStatusJSON(400, gin.H{
-			"msg": "user_id 格式错误",
-		})
-		return
+	var uid uint64
+	var uname string
+	sid, err := c.Cookie("sid")
+	if err == nil {
+		parseUID, parseErr := auth.GetSessionByToken(c.Request.Context(), sid)
+		if parseErr == nil && parseUID > 0 {
+			uid = parseUID
+			user, err := repo.SelectUserByUserID(c.Request.Context(), uid)
+			if err == nil {
+				uname = user.UserName
+			}
+		}
+
 	}
+
+	// 升级websocket
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		c.AbortWithStatusJSON(400, gin.H{
@@ -41,7 +51,8 @@ func ServeWs(hub *Hub, c *gin.Context) {
 		})
 		return
 	}
-	client := NewClient(hub, conn, rid, uid)
+
+	client := NewClient(hub, conn, rid, uid, uname)
 	client.hub.register <- client
 	go client.writePump()
 	go client.readPump()

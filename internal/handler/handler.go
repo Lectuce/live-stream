@@ -213,6 +213,14 @@ func UpdateRoom(c *gin.Context) {
 }
 
 func StartRoom(c *gin.Context) {
+	uid, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"message": "未登录",
+		})
+		return
+	}
+
 	// 路径参数 room_id
 	roomIDStr := c.Param("id")
 	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
@@ -231,12 +239,16 @@ func StartRoom(c *gin.Context) {
 		return
 	}
 	// 调用service，service只返回error
-	err = service.StartLiveService(c, roomID, req.RoomTitle)
+	err = service.StartLiveService(c.Request.Context(), roomID, req.RoomTitle, uid)
 	if err != nil {
 		log.Printf("start room failed: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "开播失败",
-		})
+		if errors.Is(err, service.ErrInvalidRoomID) {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "房间不存在"})
+		} else if errors.Is(err, service.ErrNotRoomOwner) {
+			c.JSON(http.StatusForbidden, gin.H{"message": "仅房主可开播"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "开播失败"})
+		}
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -245,6 +257,7 @@ func StartRoom(c *gin.Context) {
 }
 
 func StopRoom(c *gin.Context) {
+
 	// 路径参数 room_id
 	roomIDStr := c.Param("id")
 	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
@@ -254,7 +267,7 @@ func StopRoom(c *gin.Context) {
 		})
 		return
 	}
-	err = service.StopLiveService(c, roomID)
+	err = service.StopLiveService(c.Request.Context(), roomID)
 	if err != nil {
 		log.Printf("stop room failed: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -264,4 +277,44 @@ func StopRoom(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "关播成功",
 	})
+}
+
+func GetDanmaHistory(c *gin.Context) {
+	roomIDStr := c.Param("id")
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "room id格式错误",
+		})
+		return
+	}
+	cursorStr := c.DefaultQuery("cursor", "0")
+	cursor, err := strconv.ParseUint(cursorStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "cursor格式错误",
+		})
+		return
+	}
+	limitStr := c.DefaultQuery("limit", "20")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "limit格式错误",
+		})
+		return
+	}
+
+	data, err := service.GetDanmaHistory(c, roomID, cursor, limit)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "读取历史弹幕失败",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data":    data,
+		"message": "读取历史弹幕成功",
+	})
+
 }

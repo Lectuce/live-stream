@@ -82,3 +82,14 @@ func SelectUserByEmail(ctx context.Context, user *model.User) (*model.User, erro
 
 	return &resuser, nil
 }
+
+func SelectUserByUserID(ctx context.Context, userID uint64) (*model.User, error) {
+
+	resuser, err := gorm.G[model.User](dao.SC.Db).Where("user_id = ?", userID).First(ctx)
+
+	if err != nil {
+		return nil, fmt.Errorf("fatal error select user: %w", err)
+	}
+
+	return &resuser, nil
+}

@@ -11,6 +11,7 @@ import (
 
 var ErrInvalidOwnerID = errors.New("user already has a room")
 var ErrInvalidRoomID = errors.New("room is not exist")
+var ErrNotRoomOwner = errors.New("only room owner can operate")
 
 func CreateRoom(c context.Context, req *model.CreateRoomRequest) (*model.Room, error) {
 	if req == nil {
@@ -87,11 +88,18 @@ func UpdateRoom(c context.Context, updateReq *model.UpdateRoomRequest) (*model.R
 
 }
 
-func StartLiveService(ctx context.Context, roomID uint64, title string) error {
+func StartLiveService(ctx context.Context, roomID uint64, title string, loginID uint64) error {
 	// 当前房间必须是未开播0，不能重复开播
 	room, err := repo.SelectRoomByRoomID(ctx, roomID)
 	if err != nil {
 		return err
+	}
+	if room == nil {
+		return ErrInvalidRoomID
+	}
+	// 房主权限校验
+	if room.OwnerID != loginID {
+		return ErrNotRoomOwner
 	}
 	if room.Status != 0 {
 		return errors.New("room is already live")
@@ -104,5 +112,6 @@ func StopLiveService(ctx context.Context, roomID uint64) error {
 	if err != nil {
 		return err
 	}
+
 	return nil
 }

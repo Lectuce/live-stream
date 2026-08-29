@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"live-stream/internal/config"
+	"live-stream/internal/model"
 	"log"
 
 	"github.com/segmentio/kafka-go"
@@ -45,6 +46,23 @@ func SendMsg(ctx context.Context, key []byte, data any) error {
 	}
 
 	return nil
+}
+
+func SendDanmaMsg(ctx context.Context, msg model.Message) error {
+	if writer == nil {
+		return fmt.Errorf("kafka writer not initialized")
+	}
+	bytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("json marshal err: %v", err)
+	}
+	key := fmt.Appendf(nil, "%d", msg.RoomID)
+	return writer.WriteMessages(ctx,
+		kafka.Message{
+			Key:   key,
+			Value: bytes,
+		},
+	)
 }
 
 func Close() {

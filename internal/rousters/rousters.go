@@ -12,31 +12,43 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 
 	apiV1Group := r.Group("/api/v1")
 	{
+		// 公开接口（无需登录）
 		apiV1Group.POST("/login", func(c *gin.Context) {
 			handler.LoginHandler(c)
 		})
 		apiV1Group.POST("/register", func(c *gin.Context) {
 			handler.RegisterHandler(c)
 		})
+		// 弹幕历史
+		apiV1Group.POST("/room/:room_id/damma", func(c *gin.Context) {
+			handler.GetDanmaHistory(c)
+		})
+		apiV1Group.GET("", func(c *gin.Context) {
+			handler.ListRoom(c)
+		})
+		apiV1Group.GET("/:id", func(c *gin.Context) {
+			handler.GetRoomDetail(c)
+		})
+		// 游客可看弹幕
+		apiV1Group.GET("/ws", func(c *gin.Context) {
+			ws.ServeWs(hub, c)
+		})
+
 		authRequierd := apiV1Group.Group("/")
 		authRequierd.Use(middleware.Auth)
 		{
+			// 用户相关
 			authRequierd.GET("/me", func(c *gin.Context) {
 				handler.GetMe(c)
 			})
 			authRequierd.POST("/auth/logout", func(c *gin.Context) {
 				handler.LogOut(c)
 			})
+			// 房间操作
 			roomGroup := authRequierd.Group("/rooms")
 			{
 				roomGroup.POST("", func(c *gin.Context) {
 					handler.CreateRoom(c)
-				})
-				roomGroup.GET("", func(c *gin.Context) {
-					handler.ListRoom(c)
-				})
-				roomGroup.GET("/:id", func(c *gin.Context) {
-					handler.GetRoomDetail(c)
 				})
 				roomGroup.PATCH("/:id", func(c *gin.Context) {
 					handler.UpdateRoom(c)
@@ -48,10 +60,6 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 					handler.StopRoom(c)
 				})
 			}
-			authRequierd.GET("/ws", func(c *gin.Context) {
-				ws.ServeWs(hub, c)
-			})
-
 		}
 
 	}

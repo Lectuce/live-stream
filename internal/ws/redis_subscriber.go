@@ -43,7 +43,7 @@ func StartRedisSubscriber(ctx context.Context, hub *Hub) error {
 			}
 
 			select {
-			case hub.Broadcast <- message:
+			case hub.broadcastTasks <- message:
 			case <-ctx.Done():
 				return nil
 			}
