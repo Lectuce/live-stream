@@ -13,18 +13,18 @@ var ErrInvalidOwnerID = errors.New("user already has a room")
 var ErrInvalidRoomID = errors.New("room is not exist")
 var ErrNotRoomOwner = errors.New("only room owner can operate")
 
-func CreateRoom(c context.Context, req *model.CreateRoomRequest) (*model.Room, error) {
+func CreateRoom(c context.Context, ownerID uint64, req *model.CreateRoomRequest) (*model.Room, error) {
 	if req == nil {
 		return nil, errors.New("create room request is nil")
 	}
 	var room model.Room
 	room = model.Room{
-		OwnerID: req.OwnerID,
-		Status:  0,
-		PushURL: req.PushURL,
+		OwnerID:   ownerID,
+		RoomTitle: req.Title,
+		Status:    0,
 	}
 	// 查询用户ID是否拥有房间
-	resroom, err := repo.SelectRoomByOwnerID(c, req.OwnerID)
+	resroom, err := repo.SelectRoomByOwnerID(c, ownerID)
 	if err != nil {
 		log.Printf("create room failed: %v", err)
 		return nil, err
@@ -60,11 +60,11 @@ func RoomDetail(c context.Context, roomID uint64) (*model.RoomDetail, error) {
 	return &detail, nil
 }
 
-func UpdateRoom(c context.Context, updateReq *model.UpdateRoomRequest) (*model.Room, error) {
+func UpdateRoom(c context.Context, updateReq *model.UpdateRoomRequest, loginID uint64, roomID uint64) (*model.Room, error) {
 	if updateReq == nil {
 		return nil, errors.New("update room request is nil")
 	}
-	room, err := repo.SelectRoomByRoomID(c, updateReq.RoomID)
+	room, err := repo.SelectRoomByRoomID(c, roomID)
 	if err != nil {
 		log.Printf("room update failed: %v", err)
 		return nil, err
@@ -72,13 +72,17 @@ func UpdateRoom(c context.Context, updateReq *model.UpdateRoomRequest) (*model.R
 	if room == nil {
 		return nil, ErrInvalidRoomID
 	}
-
-	err = repo.UpdateRoom(c, updateReq)
+	// 房主权限校验
+	if room.OwnerID != loginID {
+		return nil, ErrNotRoomOwner
+	}
+	roomTitle := updateReq.RoomTitle
+	err = repo.UpdateRoom(c, roomID, roomTitle)
 	if err != nil {
 		log.Printf("room update failed: %v", err)
 		return nil, err
 	}
-	room, err = repo.SelectRoomByRoomID(c, updateReq.RoomID)
+	room, err = repo.SelectRoomByRoomID(c, roomID)
 	if err != nil {
 		log.Printf("room update failed: %v", err)
 		return nil, err

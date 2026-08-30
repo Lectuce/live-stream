@@ -8,24 +8,23 @@ import (
 )
 
 func GetDanmaHistory(ctx context.Context, roomID uint64, cursor uint64, limit int) (*model.MessageCursorDTO, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	if limit > 100 {
-		limit = 100
-	}
-	danmas, err := repo.SelectMessageByCursor(ctx, roomID, cursor, limit)
+	danmas, err := repo.SelectMessageByCursor(ctx, roomID, cursor, limit+1)
 	if err != nil {
 		log.Printf("get danmas history failed: %v", err)
 		return nil, err
 	}
-	results := &model.MessageCursorDTO{
-		List: danmas,
+	hasMore := len(danmas) > limit
+	if hasMore {
+		danmas = danmas[:limit]
 	}
-	if len(danmas) == limit {
-		results.NextCursor = danmas[len(danmas)-1].ID
-	} else {
-		results.NextCursor = 0
+
+	var nextCursor uint64
+	if hasMore && len(danmas) > 0 {
+		nextCursor = danmas[len(danmas)-1].ID
 	}
-	return results, nil
+	return &model.MessageCursorDTO{
+		List:       danmas,
+		NextCursor: nextCursor,
+		HasMore:    hasMore,
+	}, nil
 }

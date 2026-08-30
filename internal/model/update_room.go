@@ -1,6 +1,5 @@
 package model
 
 type UpdateRoomRequest struct {
-	RoomID    uint64 `json:"room_id" gorm:"primaryKey;autoIncrement"`
-	RoomTitle string `json:"room_title" mapstructure:"room_title"`
+	RoomTitle string `json:"room_title" mapstructure:"room_title" binding:"required,min=1,max=100"`
 }

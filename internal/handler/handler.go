@@ -63,7 +63,7 @@ func LoginHandler(c *gin.Context) {
 		})
 		return
 	}
-
+	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie(
 		"sid",
 		tokenStr,
@@ -89,14 +89,15 @@ func LogOut(c *gin.Context) {
 		return
 	}
 
-	auth.DelSession(c.Request.Context(), sid)
-	if err != nil {
+	if err := auth.DelSession(c.Request.Context(), sid); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "登出失败",
 		})
 		return
 	}
-	c.SetCookie("sid", "", -1, "/", "", false, false)
+
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("sid", "", -1, "/", "", true, true)
 	c.JSON(http.StatusOK, gin.H{
 		"message": "登出成功",
 	})
@@ -126,6 +127,11 @@ func GetMe(c *gin.Context) {
 }
 
 func CreateRoom(c *gin.Context) {
+	uid, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "未登录"})
+		return
+	}
 	var req model.CreateRoomRequest
 	err := c.ShouldBind(req)
 	if err != nil {
@@ -135,7 +141,7 @@ func CreateRoom(c *gin.Context) {
 		})
 		return
 	}
-	room, err := service.CreateRoom(c.Request.Context(), &req)
+	room, err := service.CreateRoom(c.Request.Context(), uid, &req)
 	if err != nil {
 		if err == service.ErrInvalidOwnerID {
 			c.JSON(http.StatusConflict, gin.H{
@@ -188,14 +194,34 @@ func GetRoomDetail(c *gin.Context) {
 }
 
 func UpdateRoom(c *gin.Context) {
+	roomID, err := strconv.ParseUint(c.Param("room_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"message": "未能获取房间",
+		})
+		return
+	}
+	uid, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"message": "未登录",
+		})
+		return
+	}
 	var updateRoomRequest model.UpdateRoomRequest
 	c.ShouldBind(updateRoomRequest)
-	room, err := service.UpdateRoom(c, &updateRoomRequest)
+	room, err := service.UpdateRoom(c, &updateRoomRequest, uid, roomID)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidRoomID) {
 			log.Printf("update room failed: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"message": "房间不存在",
+			})
+			return
+		} else if errors.Is(err, service.ErrNotRoomOwner) {
+			log.Printf("update room failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"message": "仅房主可修改房间标题",
 			})
 			return
 		}
@@ -289,7 +315,7 @@ func StopRoom(c *gin.Context) {
 }
 
 func GetDanmaHistory(c *gin.Context) {
-	roomIDStr := c.Param("id")
+	roomIDStr := c.Param("room_id")
 	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -297,15 +323,14 @@ func GetDanmaHistory(c *gin.Context) {
 		})
 		return
 	}
-	cursorStr := c.DefaultQuery("cursor", "0")
-	cursor, err := strconv.ParseUint(cursorStr, 10, 64)
+	beforeID, err := strconv.ParseUint(c.DefaultQuery("before_id", "0"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "cursor格式错误",
 		})
 		return
 	}
-	limitStr := c.DefaultQuery("limit", "20")
+	limitStr := c.DefaultQuery("limit", "50")
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -314,7 +339,7 @@ func GetDanmaHistory(c *gin.Context) {
 		return
 	}
 
-	data, err := service.GetDanmaHistory(c, roomID, cursor, limit)
+	data, err := service.GetDanmaHistory(c, roomID, beforeID, limit)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "读取历史弹幕失败",

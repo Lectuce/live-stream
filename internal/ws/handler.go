@@ -43,6 +43,21 @@ func ServeWs(hub *Hub, c *gin.Context) {
 
 	}
 
+	room, err := repo.SelectRoomByRoomID(c, rid)
+	if err != nil || room == nil {
+		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
+			"message": "房间不存在",
+		})
+		return
+	}
+
+	if room.Status != 1 {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"message": "房间尚未开播",
+		})
+		return
+	}
+
 	// 升级websocket
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {

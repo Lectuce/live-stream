@@ -85,17 +85,17 @@ func DeleteRoomDanma(ctx context.Context, danma *model.Danma) error {
 	}
 }
 
-func SelectMessageByCursor(ctx context.Context, roomID uint64, cursor uint64, limit int) ([]model.Danma, error) {
-	db := gorm.G[model.Danma](dao.SC.Db).
-		Where("room_id = ? ", roomID).
-		Order("danma_id DESC").
+func SelectMessageByCursor(ctx context.Context, roomID uint64, beforeID uint64, limit int) ([]model.Danma, error) {
+	query := dao.SC.Db.WithContext(ctx).
+		Where("room_id = ?", roomID).
+		Order("id DESC").
 		Limit(limit)
 
-	if cursor > 0 {
-		db = db.Where("danma_id < ?", cursor)
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
 	}
-
-	danmas, err := db.Find(ctx)
+	var danmas []model.Danma
+	err := query.Find(&danmas).Error
 	if err != nil {
 		return nil, fmt.Errorf("select messages by cursor failed: %w", err)
 	}

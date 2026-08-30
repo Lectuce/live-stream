@@ -1,30 +1,63 @@
+version: "3.8"
+
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     container_name: zookeeper
-    ports:
-      - "2181:2181"
+    restart: unless-stopped
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 0
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
 
   kafka:
     image: confluentinc/cp-kafka:7.4.0
     container_name: kafka
-    ports:
-      - "9092:9092"
+    restart: unless-stopped
     depends_on:
       - zookeeper
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 0
+    ports:
+      - "9092:9092"
     environment:
       KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:9092
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka:29092,EXTERNAL://[2402:4e00:c011:2600:3052:ef08:8c34:0]:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    restart: unless-stopped
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 0
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: "161413"
+      MYSQL_DATABASE: live_stream
+      MYSQL_USER: yujun
+      MYSQL_PASSWORD: "161413"
+    command:
+      - "--bind-address=*"
+
   redis:
-    image: redis:6-alpine
+    image: redis:7-alpine
     container_name: redis
+    restart: unless-stopped
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 0
     ports:
       - "6379:6379"
-
+    command:
+      - redis-server
+      - --bind
+      - "0.0.0.0"
+      - "::"
