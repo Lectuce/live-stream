@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"live-stream/internal/kafka"
+	"live-stream/internal/model"
 	"log"
 	"net/http"
 
@@ -67,6 +68,10 @@ func (c *Client) readPump() {
 		msg.UserID = c.UserID
 		msg.RoomID = c.RoomID
 		msg.UserName = c.UserName
+
+		if msg.Type == "" {
+			msg.Type = model.MsgTypeDanma
+		}
 
 		err = kafka.SendDanmaMsg(c.hub.ctx, msg)
 		if err != nil {

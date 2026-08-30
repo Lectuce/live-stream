@@ -2,6 +2,7 @@ package dao
 
 import (
 	"context"
+	"fmt"
 	"live-stream/internal/config"
 	"time"
 
@@ -60,4 +61,17 @@ func GetSession(ctx context.Context, key string) (uint64, error) {
 // DelSession 删除session（登出时用）
 func DelSession(ctx context.Context, key string) error {
 	return SC.Redis.Del(ctx, key).Err()
+}
+
+// IncrRoomLikeCount 房间点赞数 +1（原子操作）
+func IncrRoomLikeCount(ctx context.Context, roomID uint64) {
+	key := fmt.Sprintf("room:like:%d", roomID)
+	SC.Redis.Incr(ctx, key)
+}
+
+// GetRoomLikeCount 获取房间点赞总数
+func GetRoomLikeCount(ctx context.Context, roomID uint64) int64 {
+	key := fmt.Sprintf("room:like:%d", roomID)
+	cnt, _ := SC.Redis.Get(ctx, key).Int64()
+	return cnt
 }

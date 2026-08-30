@@ -257,7 +257,13 @@ func StartRoom(c *gin.Context) {
 }
 
 func StopRoom(c *gin.Context) {
-
+	uid, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"message": "未登录",
+		})
+		return
+	}
 	// 路径参数 room_id
 	roomIDStr := c.Param("id")
 	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
@@ -267,12 +273,15 @@ func StopRoom(c *gin.Context) {
 		})
 		return
 	}
-	err = service.StopLiveService(c.Request.Context(), roomID)
+	err = service.StopLiveService(c.Request.Context(), roomID, uid)
 	if err != nil {
-		log.Printf("stop room failed: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "关播失败",
-		})
+		if errors.Is(err, service.ErrInvalidRoomID) {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "房间不存在"})
+		} else if errors.Is(err, service.ErrNotRoomOwner) {
+			c.JSON(http.StatusForbidden, gin.H{"message": "仅房主可开播"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "开播失败"})
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"message": "关播成功",

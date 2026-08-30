@@ -107,8 +107,22 @@ func StartLiveService(ctx context.Context, roomID uint64, title string, loginID 
 	return repo.StartLive(ctx, roomID, title)
 }
 
-func StopLiveService(ctx context.Context, roomID uint64) error {
-	err := repo.StopLive(ctx, roomID)
+func StopLiveService(ctx context.Context, roomID uint64, loginID uint64) error {
+	room, err := repo.SelectRoomByRoomID(ctx, roomID)
+	if err != nil {
+		return err
+	}
+	if room == nil {
+		return ErrInvalidRoomID
+	}
+	// 房主权限校验
+	if room.OwnerID != loginID {
+		return ErrNotRoomOwner
+	}
+	if room.Status != 1 {
+		return errors.New("room is already live")
+	}
+	err = repo.StopLive(ctx, roomID)
 	if err != nil {
 		return err
 	}

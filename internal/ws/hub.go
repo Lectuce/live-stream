@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"live-stream/internal/model"
 	"log"
 	"runtime"
 	"sync"
@@ -61,7 +62,11 @@ func (h *Hub) broadcastWorker() {
 }
 
 func (h *Hub) Run() {
+	for i := 0; i < h.workerNum; i++ {
+		go h.broadcastWorker()
+	}
 
+	log.Printf("hub started, workerNum=%d", h.workerNum)
 	for i := 0; i < h.workerNum; i++ {
 		select {
 		case <-h.ctx.Done():
@@ -95,6 +100,23 @@ func (h *Hub) handleRegister(client *Client) {
 	room.onlineUsers[client.UserID]++
 	h.mu.Unlock()
 
+	room.mu.RLock()
+	onlineCount := len(room.clients)
+	room.mu.RUnlock()
+
+	msg := model.Message{
+		Type:   model.MsgTypeSystem,
+		RoomID: client.RoomID,
+		Data: map[string]interface{}{
+			"sub_type":     "online_count",
+			"online_count": onlineCount,
+		},
+	}
+	select {
+	case h.broadcastTasks <- msg:
+	default:
+	}
+
 }
 
 func (h *Hub) handleUnregister(client *Client) {
@@ -104,7 +126,6 @@ func (h *Hub) handleUnregister(client *Client) {
 	h.mu.Unlock()
 
 	if !ok {
-		h.mu.Unlock()
 		return
 	}
 	// 房间级写锁：只操作当前房间的客户端集合
@@ -123,6 +144,22 @@ func (h *Hub) handleUnregister(client *Client) {
 		delete(h.rooms, client.RoomID)
 		h.mu.Unlock()
 	}
+	room.mu.RLock()
+	onlineCount := len(room.clients)
+	room.mu.RUnlock()
+
+	msg := model.Message{
+		Type:   model.MsgTypeSystem,
+		RoomID: client.RoomID,
+		Data: map[string]interface{}{
+			"sub_type":     "onliene_count",
+			"online_count": onlineCount,
+		},
+	}
+	select {
+	case h.broadcastTasks <- msg:
+	default:
+	}
 
 }
 
@@ -138,7 +175,7 @@ func (h *Hub) broadcastToRoom(msg *Message) {
 	for c := range room.clients {
 		clients = append(clients, c)
 	}
-	h.mu.Unlock()
+	room.mu.RUnlock()
 
 	// 从池里取缓冲区
 	buf := bufPool.Get().([]byte)

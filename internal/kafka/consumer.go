@@ -69,9 +69,10 @@ func StartKafkaConsumer(ctx context.Context) error {
 		maxRetry  = 3
 	)
 	var (
-		batch  = make([]model.Danma, 0, batchSize)
-		msgs   = make([]kafka.Message, 0, batchSize)
-		ticker = time.NewTicker(maxWait)
+		batch   = make([]model.Danma, 0, batchSize)
+		rawMsgs = make([]model.Message, 0, batchSize)
+		msgs    = make([]kafka.Message, 0, batchSize)
+		ticker  = time.NewTicker(maxWait)
 	)
 	defer ticker.Stop()
 	for {
@@ -80,7 +81,7 @@ func StartKafkaConsumer(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			if len(batch) > 0 {
-				processBath(ctx, reader, batch, msgs, maxRetry)
+				processBath(ctx, reader, batch, rawMsgs, msgs, maxRetry)
 				batch = batch[:0]
 				msgs = msgs[:0]
 			}
@@ -109,18 +110,22 @@ func StartKafkaConsumer(ctx context.Context) error {
 				_ = commitWithRetry(ctx, reader, msg)
 				continue
 			}
-			// 转换为数据库实体
-			dbDanma := model.Danma{
-				MessageID: danmaMsg.MessageID,
-				RoomID:    danmaMsg.RoomID,
-				UserID:    danmaMsg.UserID,
-				UserName:  danmaMsg.UserName,
-				Content:   danmaMsg.Content,
+			if danmaMsg.Type == model.MsgTypeDanma {
+				// 转换为数据库实体
+				dbDanma := model.Danma{
+					MessageID: danmaMsg.MessageID,
+					RoomID:    danmaMsg.RoomID,
+					UserID:    danmaMsg.UserID,
+					UserName:  danmaMsg.UserName,
+					Content:   danmaMsg.Content,
+				}
+				batch = append(batch, dbDanma)
 			}
-			batch = append(batch, dbDanma)
+
+			rawMsgs = append(rawMsgs, danmaMsg)
 			msgs = append(msgs, msg)
-			if len(batch) >= batchSize {
-				processBath(ctx, reader, batch, msgs, maxRetry)
+			if len(rawMsgs) >= batchSize {
+				processBath(ctx, reader, batch, rawMsgs, msgs, maxRetry)
 				batch = batch[:0]
 				msgs = msgs[:0]
 				ticker.Reset(maxWait)
@@ -130,19 +135,30 @@ func StartKafkaConsumer(ctx context.Context) error {
 	}
 }
 
-func processBath(ctx context.Context, reader *kafka.Reader, batch []model.Danma, msgs []kafka.Message, maxRetry int) {
-	for i := 0; i < maxRetry; i++ {
-		err := repo.BatchCreateDanma(ctx, batch)
-		if err != nil {
-			break
-		}
+func processBath(ctx context.Context, reader *kafka.Reader, batch []model.Danma, rawMsgs []model.Message, msgs []kafka.Message, maxRetry int) {
 
-		if i == maxRetry-1 {
-			log.Printf("batch insert finally failed, count=%d, err=%v", len(batch), err)
-			return
+	if len(batch) > 0 {
+		for i := 0; i < maxRetry; i++ {
+			err := repo.BatchCreateDanma(ctx, batch)
+			if err != nil {
+				break
+			}
+
+			if i == maxRetry-1 {
+				log.Printf("batch insert finally failed, count=%d, err=%v", len(batch), err)
+				return
+			}
+			time.Sleep(time.Second)
 		}
-		time.Sleep(time.Second)
 	}
+
+	// 点赞消息：更新 Redis 房间点赞计数
+	for _, msg := range rawMsgs {
+		if msg.Type == model.MsgTypeLike {
+			dao.IncrRoomLikeCount(ctx, msg.RoomID)
+		}
+	}
+
 	// 批量发布 Redis
 	for _, dm := range batch {
 		payload, _ := json.Marshal(dm)
