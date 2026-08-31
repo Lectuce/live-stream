@@ -7,6 +7,7 @@ import (
 	"log"
 	"runtime"
 	"sync"
+	"time"
 )
 
 type Room struct {
@@ -24,6 +25,9 @@ type Hub struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	workerNum      int
+	presenceMu     sync.Mutex
+	presenceDirty  map[uint64]struct{}
+	presencePeriod time.Duration
 }
 
 func NewHub() *Hub {
@@ -37,6 +41,8 @@ func NewHub() *Hub {
 		ctx:            ctx,
 		cancel:         cancel,
 		workerNum:      worknum,
+		presenceDirty:  make(map[uint64]struct{}),
+		presencePeriod: 250 * time.Millisecond,
 	}
 }
 
@@ -59,6 +65,7 @@ func (h *Hub) Run() {
 	for i := 0; i < h.workerNum; i++ {
 		go h.broadcastWorker()
 	}
+	go h.presenceWorker()
 
 	log.Printf("hub started, workerNum=%d", h.workerNum)
 	for {
@@ -91,23 +98,9 @@ func (h *Hub) handleRegister(client *Client) {
 		room.clients[client] = true
 		room.onlineUsers[client.UserID]++
 	}
-	onlineCount := len(room.clients)
 	room.mu.Unlock()
 	h.mu.Unlock()
-
-	msg := model.Message{
-		Type:   model.MsgTypeSystem,
-		RoomID: client.RoomID,
-		Data: map[string]interface{}{
-			"sub_type":     "online_count",
-			"online_count": onlineCount,
-		},
-	}
-	select {
-	case h.broadcastTasks <- msg:
-	default:
-	}
-
+	h.markPresenceDirty(client.RoomID)
 }
 
 func (h *Hub) handleUnregister(client *Client) {
@@ -132,27 +125,73 @@ func (h *Hub) handleUnregister(client *Client) {
 		delete(room.onlineUsers, client.UserID)
 	}
 	clientCount := len(room.clients)
-	onlineCount := clientCount
 	client.closeSend()
 	if clientCount == 0 {
 		delete(h.rooms, client.RoomID)
 	}
 	room.mu.Unlock()
 	h.mu.Unlock()
+	h.markPresenceDirty(client.RoomID)
+}
+
+// markPresenceDirty stores only the latest pending state for each room. A burst
+// of joins/leaves therefore creates one presence update per period, not one
+// room-wide broadcast per connection event.
+func (h *Hub) markPresenceDirty(roomID uint64) {
+	h.presenceMu.Lock()
+	h.presenceDirty[roomID] = struct{}{}
+	h.presenceMu.Unlock()
+}
+
+func (h *Hub) takeDirtyRooms() []uint64 {
+	h.presenceMu.Lock()
+	roomIDs := make([]uint64, 0, len(h.presenceDirty))
+	for roomID := range h.presenceDirty {
+		roomIDs = append(roomIDs, roomID)
+		delete(h.presenceDirty, roomID)
+	}
+	h.presenceMu.Unlock()
+	return roomIDs
+}
+
+func (h *Hub) presenceWorker() {
+	ticker := time.NewTicker(h.presencePeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-h.ctx.Done():
+			return
+		case <-ticker.C:
+			for _, roomID := range h.takeDirtyRooms() {
+				h.broadcastOnlineCount(roomID)
+			}
+		}
+	}
+}
+
+func (h *Hub) broadcastOnlineCount(roomID uint64) {
+	h.mu.Lock()
+	room, ok := h.rooms[roomID]
+	if !ok {
+		h.mu.Unlock()
+		return
+	}
+	room.mu.RLock()
+	h.mu.Unlock()
+	onlineCount := len(room.clients)
+	room.mu.RUnlock()
 
 	msg := model.Message{
 		Type:   model.MsgTypeSystem,
-		RoomID: client.RoomID,
+		RoomID: roomID,
 		Data: map[string]interface{}{
 			"sub_type":     "online_count",
 			"online_count": onlineCount,
 		},
 	}
-	select {
-	case h.broadcastTasks <- msg:
-	default:
-	}
-
+	// Presence is a replaceable state update, so it is deliberately kept out
+	// of the event queue used by danmaku messages.
+	h.broadcastToRoom(&msg)
 }
 
 func (h *Hub) broadcastToRoom(msg *Message) {

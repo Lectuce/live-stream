@@ -73,3 +73,40 @@ func TestConcurrentBroadcastAndUnregister(t *testing.T) {
 		t.Fatal("client send channel was not closed by unregister")
 	}
 }
+
+func TestPresenceUpdatesAreCoalesced(t *testing.T) {
+	hub := NewHub()
+	hub.presencePeriod = 10 * time.Millisecond
+	client := NewClient(hub, nil, 1, 1, "tester")
+	hub.handleRegister(client)
+	for i := 0; i < 100; i++ {
+		hub.markPresenceDirty(1)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		hub.presenceWorker()
+		close(done)
+	}()
+
+	deadline := time.After(200 * time.Millisecond)
+	for len(client.send) == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("coalesced online count was not broadcast")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	time.Sleep(15 * time.Millisecond)
+	if got := len(client.send); got != 1 {
+		t.Fatalf("expected one coalesced online-count frame, got %d", got)
+	}
+
+	hub.Stop()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("presence worker did not stop")
+	}
+}

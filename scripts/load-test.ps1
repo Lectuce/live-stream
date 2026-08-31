@@ -10,9 +10,14 @@ param(
     [ValidateRange(0.0, 1.0)]
     [double]$ActiveRatio = 1.0,
 
+    [ValidateRange(-1, 1000000)]
+    [int]$ActiveClients = -1,
+
     [string]$SendInterval = "2s",
     [string]$RampInterval = "10ms",
+    [string]$Warmup = "2s",
     [string]$Duration = "30s",
+    [string]$Drain = "5s",
 
     [switch]$StartTunnel,
     [string]$SshTarget = "",
@@ -34,6 +39,10 @@ $script:RoomStarted = $false
 $script:RoomId = [uint64]0
 $script:Sid = ""
 $script:WebSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$sendingEnabled = if ($ActiveClients -ge 0) { $ActiveClients -gt 0 } else { $ActiveRatio -gt 0 }
+if ($ActiveClients -gt $Connections) {
+    throw "-ActiveClients cannot be greater than -Connections"
+}
 
 function Write-Step {
     param([string]$Message)
@@ -184,8 +193,13 @@ function Invoke-Benchmark {
         "-active", $activeText,
         "-r", $SendInterval,
         "-ramp", $RampInterval,
-        "-d", $Duration
+		"-warmup", $Warmup,
+		"-d", $Duration,
+		"-drain", $Drain
     )
+    if ($ActiveClients -ge 0) {
+        $arguments += @("-active-clients", $ActiveClients.ToString())
+    }
 
     Write-Step "Running WebSocket benchmark"
     $benchmarkLines = @()
@@ -224,26 +238,44 @@ function Invoke-Benchmark {
     if (-not $metricsMatch.Success) {
         throw "Unable to parse benchmark metrics: $finalLine"
     }
+    $connectionMatch = [regex]::Match(
+        $finalLine,
+        "peak_conns=(?<peak>\d+) dial_attempted=(?<attempted>\d+) dial_succeeded=(?<succeeded>\d+) dial_failed=(?<failed>\d+)"
+    )
+    if (-not $connectionMatch.Success) {
+        throw "Unable to parse benchmark connection metrics: $finalLine"
+    }
 
     $sent = [int64]$metricsMatch.Groups["sent"].Value
     $received = [int64]$metricsMatch.Groups["received"].Value
     $errors = [int64]$metricsMatch.Groups["errors"].Value
+    $peakConnections = [int64]$connectionMatch.Groups["peak"].Value
+    $dialAttempted = [int64]$connectionMatch.Groups["attempted"].Value
+    $dialSucceeded = [int64]$connectionMatch.Groups["succeeded"].Value
+    $dialFailed = [int64]$connectionMatch.Groups["failed"].Value
 
     if ($errors -ne 0) {
         throw "Benchmark reported $errors errors"
     }
-    if ($ActiveRatio -gt 0 -and $sent -eq 0) {
+    if ($dialAttempted -ne $Connections -or $dialSucceeded -ne $Connections -or $dialFailed -ne 0 -or $peakConnections -ne $Connections) {
+        throw "Connection target was not reached: attempted=$dialAttempted succeeded=$dialSucceeded failed=$dialFailed peak=$peakConnections target=$Connections"
+    }
+    if ($sendingEnabled -and $sent -eq 0) {
         throw "Benchmark did not send any messages"
     }
-    if ($ActiveRatio -gt 0 -and $received -eq 0) {
+    if ($sendingEnabled -and $received -eq 0) {
         throw "Benchmark sent messages but received no broadcasts"
     }
 
     return [pscustomobject]@{
-        Sent      = $sent
-        Received  = $received
-        Errors    = $errors
-        FinalLine = $finalLine
+        Sent            = $sent
+        Received        = $received
+        Errors          = $errors
+        PeakConnections = $peakConnections
+        DialAttempted   = $dialAttempted
+        DialSucceeded   = $dialSucceeded
+        DialFailed      = $dialFailed
+        FinalLine       = $finalLine
     }
 }
 
@@ -296,7 +328,7 @@ try {
     else {
         $baseUri.Port
     }
-    Wait-TcpPort -HostName $baseUri.Host -Port $basePort
+    Wait-TcpPort -HostName $baseUri.DnsSafeHost -Port $basePort
     $null = Invoke-JsonApi -Method Get -Uri "$BaseUrl/api/v1/rooms"
 
     $stamp = Get-Date -Format "yyyyMMddHHmmssfff"
@@ -374,7 +406,7 @@ try {
 
     $benchmarkResult = Invoke-Benchmark -RoomId $script:RoomId -Sid $script:Sid
 
-    if (-not $SkipHistoryCheck -and $ActiveRatio -gt 0) {
+    if (-not $SkipHistoryCheck -and $sendingEnabled) {
         $historyCount = Test-History -RoomId $script:RoomId
     }
 
@@ -409,6 +441,8 @@ if (-not $testSucceeded) {
 
 Write-Host "`nAUTOMATED LOAD TEST PASSED" -ForegroundColor Green
 Write-Host "Room ID: $($script:RoomId)"
+Write-Host "Peak connections: $($benchmarkResult.PeakConnections)"
+Write-Host "Dial succeeded: $($benchmarkResult.DialSucceeded)/$($benchmarkResult.DialAttempted)"
 Write-Host "Sent: $($benchmarkResult.Sent)"
 Write-Host "Received: $($benchmarkResult.Received)"
 Write-Host "History matches: $historyCount"

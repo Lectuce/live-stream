@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -29,12 +30,16 @@ const (
 )
 
 type metrics struct {
-	connected atomic.Int64
-	sent      atomic.Int64
-	received  atomic.Int64
-	expected  atomic.Int64
-	frames    atomic.Int64
-	errors    atomic.Int64
+	connected     atomic.Int64
+	peakConnected atomic.Int64
+	dialAttempted atomic.Int64
+	dialSucceeded atomic.Int64
+	dialFailed    atomic.Int64
+	sent          atomic.Int64
+	received      atomic.Int64
+	expected      atomic.Int64
+	frames        atomic.Int64
+	errors        atomic.Int64
 }
 
 type incomingMessage struct {
@@ -54,9 +59,12 @@ func main() {
 	origin := flag.String("origin", "http://localhost:5173", "Origin header allowed by the server")
 	sessionID := flag.String("sid", "", "optional sid cookie; required for bots that send messages")
 	activeRatio := flag.Float64("active", defaultActiveRatio, "fraction of connected clients that send messages (0..1)")
+	activeClients := flag.Int("active-clients", -1, "exact number of message-sending clients; -1 uses -active")
 	sendInterval := flag.Duration("r", defaultSendInterval, "average message interval for active clients")
 	rampInterval := flag.Duration("ramp", defaultRampInterval, "delay between connection attempts; 0 disables ramp-up")
-	duration := flag.Duration("d", 0, "test duration; 0 runs until Ctrl+C")
+	warmup := flag.Duration("warmup", 2*time.Second, "settling time after all dial attempts finish")
+	duration := flag.Duration("d", 0, "message-sending duration; 0 runs until Ctrl+C")
+	drain := flag.Duration("drain", 3*time.Second, "time to keep connections open after sending stops")
 	reportInterval := flag.Duration("report", defaultReportInterval, "metrics reporting interval")
 	flag.Parse()
 
@@ -69,11 +77,17 @@ func main() {
 	if *activeRatio < 0 || *activeRatio > 1 {
 		log.Fatal("-active must be between 0 and 1")
 	}
+	if *activeClients < -1 || *activeClients > *clients {
+		log.Fatal("-active-clients must be -1 or between 0 and -c")
+	}
 	if *sendInterval <= 0 {
 		log.Fatal("-r must be greater than 0")
 	}
 	if *rampInterval < 0 {
 		log.Fatal("-ramp cannot be negative")
+	}
+	if *warmup < 0 || *drain < 0 {
+		log.Fatal("-warmup and -drain cannot be negative")
 	}
 	if *reportInterval <= 0 {
 		log.Fatal("-report must be greater than 0")
@@ -89,35 +103,38 @@ func main() {
 		}
 	}
 
-	effectiveActiveRatio := *activeRatio
-	if *sessionID == "" && effectiveActiveRatio > 0 {
-		log.Printf("[WARN] -sid is empty; switching to listener-only mode (-active=0)")
-		effectiveActiveRatio = 0
+	activeClientCount := resolveActiveClientCount(*clients, *activeRatio, *activeClients)
+	if *sessionID == "" && activeClientCount > 0 {
+		log.Printf("[WARN] -sid is empty; switching to listener-only mode")
+		activeClientCount = 0
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if *duration > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *duration)
-		defer cancel()
-	}
+	clientCtx, cancelClients := context.WithCancel(signalCtx)
+	defer cancelClients()
 
 	var stats metrics
 	startedAt := time.Now()
-	go monitor(ctx, &stats, startedAt, *reportInterval)
+	go monitor(clientCtx, &stats, startedAt, *reportInterval)
 
 	log.Printf(
-		"[BENCHMARK] starting clients=%d room=%d active_ratio=%.4f send_interval=%s ramp=%s targets=%v",
+		"[BENCHMARK] starting clients=%d room=%d active_clients=%d send_interval=%s ramp=%s warmup=%s send_duration=%s drain=%s targets=%v",
 		*clients,
 		*roomID,
-		effectiveActiveRatio,
+		activeClientCount,
 		*sendInterval,
 		*rampInterval,
+		*warmup,
+		*duration,
+		*drain,
 		targets,
 	)
 
-	var wg sync.WaitGroup
+	startSending := make(chan struct{})
+	stopSending := make(chan struct{})
+	var clientWG sync.WaitGroup
+	var dialWG sync.WaitGroup
 	var rampTicker *time.Ticker
 	if *rampInterval > 0 {
 		rampTicker = time.NewTicker(*rampInterval)
@@ -128,32 +145,88 @@ launchLoop:
 	for id := 0; id < *clients; id++ {
 		if rampTicker != nil {
 			select {
-			case <-ctx.Done():
+			case <-signalCtx.Done():
 				break launchLoop
 			case <-rampTicker.C:
 			}
 		}
 
-		wg.Add(1)
+		clientWG.Add(1)
+		dialWG.Add(1)
 		go func(clientID int) {
-			defer wg.Done()
+			defer clientWG.Done()
 			target := targets[clientID%len(targets)]
 			runClient(
-				ctx,
+				clientCtx,
 				&stats,
 				target,
 				*origin,
 				*sessionID,
 				*roomID,
 				clientID,
-				effectiveActiveRatio,
+				isActiveClient(clientID, *clients, activeClientCount),
 				*sendInterval,
+				startSending,
+				stopSending,
+				&dialWG,
 			)
 		}(id)
 	}
 
-	wg.Wait()
+	dialWG.Wait()
+	if signalCtx.Err() == nil && waitFor(signalCtx, *warmup) {
+		log.Printf("[BENCHMARK] warm-up complete; starting message phase")
+		close(startSending)
+		if *duration > 0 {
+			if waitFor(signalCtx, *duration) {
+				close(stopSending)
+				log.Printf("[BENCHMARK] sending stopped; draining broadcasts for %s", *drain)
+				_ = waitFor(signalCtx, *drain)
+			}
+		} else {
+			<-signalCtx.Done()
+		}
+	}
+	cancelClients()
+	clientWG.Wait()
 	printFinal(&stats, startedAt)
+}
+
+func resolveActiveClientCount(total int, ratio float64, override int) int {
+	if override >= 0 {
+		return override
+	}
+	count := int(math.Round(float64(total) * ratio))
+	if ratio > 0 && count == 0 {
+		count = 1
+	}
+	if count > total {
+		return total
+	}
+	return count
+}
+
+func isActiveClient(clientID, total, activeCount int) bool {
+	if total <= 0 || activeCount <= 0 {
+		return false
+	}
+	before := int64(clientID) * int64(activeCount) / int64(total)
+	after := int64(clientID+1) * int64(activeCount) / int64(total)
+	return after > before
+}
+
+func waitFor(ctx context.Context, duration time.Duration) bool {
+	if duration == 0 {
+		return ctx.Err() == nil
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func splitTargets(raw string) []string {
@@ -193,12 +266,17 @@ func runClient(
 	sessionID string,
 	roomID uint64,
 	clientID int,
-	activeRatio float64,
+	isTalker bool,
 	sendInterval time.Duration,
+	startSending <-chan struct{},
+	stopSending <-chan struct{},
+	dialWG *sync.WaitGroup,
 ) {
+	stats.dialAttempted.Add(1)
 	endpoint, err := buildWebSocketURL(target, roomID)
 	if err != nil {
-		stats.errors.Add(1)
+		recordDialFailure(stats, clientID, nil, err)
+		dialWG.Done()
 		return
 	}
 
@@ -206,7 +284,7 @@ func runClient(
 	if origin != "" {
 		headers.Set("Origin", origin)
 	}
-	if sessionID != "" {
+	if isTalker && sessionID != "" {
 		headers.Set("Cookie", "sid="+sessionID)
 	}
 
@@ -214,15 +292,14 @@ func runClient(
 	dialer.HandshakeTimeout = 10 * time.Second
 	conn, response, err := dialer.DialContext(ctx, endpoint, headers)
 	if err != nil {
-		stats.errors.Add(1)
-		if response != nil && clientID < 10 {
-			log.Printf("[DIAL ERROR] client=%d status=%s err=%v", clientID, response.Status, err)
-		} else if clientID < 10 {
-			log.Printf("[DIAL ERROR] client=%d err=%v", clientID, err)
-		}
+		recordDialFailure(stats, clientID, response, err)
+		dialWG.Done()
 		return
 	}
-	stats.connected.Add(1)
+	stats.dialSucceeded.Add(1)
+	connected := stats.connected.Add(1)
+	updatePeak(&stats.peakConnected, connected)
+	dialWG.Done()
 	defer func() {
 		_ = conn.Close()
 		stats.connected.Add(-1)
@@ -231,8 +308,6 @@ func runClient(
 	readDone := make(chan struct{})
 	go readMessages(ctx, conn, stats, readDone)
 
-	rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(clientID)))
-	isTalker := sessionID != "" && rng.Float64() < activeRatio
 	if !isTalker {
 		select {
 		case <-ctx.Done():
@@ -242,6 +317,15 @@ func runClient(
 		return
 	}
 
+	select {
+	case <-ctx.Done():
+		return
+	case <-readDone:
+		return
+	case <-startSending:
+	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(clientID)))
 	sequence := int64(0)
 	for {
 		jitteredInterval := time.Duration(float64(sendInterval) * (0.5 + rng.Float64()))
@@ -253,6 +337,13 @@ func runClient(
 			return
 		case <-readDone:
 			timer.Stop()
+			return
+		case <-stopSending:
+			timer.Stop()
+			select {
+			case <-ctx.Done():
+			case <-readDone:
+			}
 			return
 		case <-timer.C:
 			sequence++
@@ -271,12 +362,37 @@ func runClient(
 	}
 }
 
+func recordDialFailure(stats *metrics, clientID int, response *http.Response, err error) {
+	stats.errors.Add(1)
+	failureNumber := stats.dialFailed.Add(1)
+	if response != nil && response.Body != nil {
+		defer response.Body.Close()
+	}
+	if failureNumber > 10 {
+		return
+	}
+	if response != nil {
+		log.Printf("[DIAL ERROR %d/10] client=%d status=%s err=%v", failureNumber, clientID, response.Status, err)
+		return
+	}
+	log.Printf("[DIAL ERROR %d/10] client=%d err=%v", failureNumber, clientID, err)
+}
+
+func updatePeak(peak *atomic.Int64, current int64) {
+	for {
+		previous := peak.Load()
+		if current <= previous || peak.CompareAndSwap(previous, current) {
+			return
+		}
+	}
+}
+
 func readMessages(ctx context.Context, conn *websocket.Conn, stats *metrics, done chan<- struct{}) {
 	defer close(done)
 	for {
 		_, payload, err := conn.ReadMessage()
 		if err != nil {
-			if ctx.Err() == nil {
+			if ctx.Err() == nil && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				stats.errors.Add(1)
 			}
 			return
@@ -316,9 +432,12 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 				loss = float64(lag) / float64(expected) * 100
 			}
 			log.Printf(
-				"[STATS] elapsed=%s conns=%d sent/s=%d recv/s=%d frames=%d lag=%d loss=%.2f%% errors=%d",
+				"[STATS] elapsed=%s conns=%d peak=%d dials=%d/%d sent/s=%d recv/s=%d frames=%d lag=%d loss=%.2f%% errors=%d",
 				time.Since(startedAt).Round(time.Second),
 				stats.connected.Load(),
+				stats.peakConnected.Load(),
+				stats.dialSucceeded.Load(),
+				stats.dialAttempted.Load(),
 				sent-lastSent,
 				received-lastReceived,
 				stats.frames.Load(),
@@ -335,7 +454,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 func printFinal(stats *metrics, startedAt time.Time) {
 	duration := time.Since(startedAt)
 	log.Printf(
-		"[FINAL] duration=%s conns=%d sent=%d received=%d frames=%d expected=%d errors=%d",
+		"[FINAL] duration=%s conns=%d sent=%d received=%d frames=%d expected=%d errors=%d peak_conns=%d dial_attempted=%d dial_succeeded=%d dial_failed=%d",
 		duration.Round(time.Millisecond),
 		stats.connected.Load(),
 		stats.sent.Load(),
@@ -343,5 +462,9 @@ func printFinal(stats *metrics, startedAt time.Time) {
 		stats.frames.Load(),
 		stats.expected.Load(),
 		stats.errors.Load(),
+		stats.peakConnected.Load(),
+		stats.dialAttempted.Load(),
+		stats.dialSucceeded.Load(),
+		stats.dialFailed.Load(),
 	)
 }

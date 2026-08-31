@@ -386,7 +386,9 @@ go run .\cmd\benchmark `
   -origin "http://localhost:5173" `
   -room $RoomId `
   -c 1 `
-  -active 0 `
+  -active-clients 0 `
+  -warmup 2s `
+  -drain 5s `
   -d 15s
 ```
 
@@ -405,7 +407,9 @@ go run .\cmd\benchmark `
   -origin "http://localhost:5173" `
   -room $RoomId `
   -c 10 `
-  -active 0 `
+  -active-clients 0 `
+  -warmup 2s `
+  -drain 5s `
   -d 30s
 ```
 
@@ -422,8 +426,10 @@ go run .\cmd\benchmark `
   -room $RoomId `
   -sid $Sid `
   -c 10 `
-  -active 1 `
+  -active-clients 10 `
   -r 2s `
+  -warmup 2s `
+  -drain 5s `
   -d 1m
 ```
 
@@ -478,9 +484,11 @@ go run .\cmd\benchmark `
   -room $RoomId `
   -sid $Sid `
   -c 1000 `
-  -active 0.001 `
+  -active-clients 10 `
   -r 1s `
   -ramp 2ms `
+  -warmup 3s `
+  -drain 5s `
   -d 2m
 ```
 
@@ -518,9 +526,11 @@ go run .\cmd\benchmark `
   -room $RoomId `
   -sid $Sid `
   -c 1000 `
-  -active 0.001 `
+  -active-clients 10 `
   -r 1s `
   -ramp 2ms `
+  -warmup 3s `
+  -drain 5s `
   -d 2m
 ```
 
@@ -533,9 +543,11 @@ go run .\cmd\benchmark `
   -room $RoomId `
   -sid $Sid `
   -c 30000 `
-  -active 0.001 `
+  -active-clients 30 `
   -r 1s `
   -ramp 1ms `
+  -warmup 5s `
+  -drain 10s `
   -d 5m
 ```
 
@@ -557,9 +569,11 @@ go run .\cmd\benchmark `
   -room $RoomId `
   -sid $Sid `
   -c 30000 `
-  -active 0.001 `
+  -active-clients 30 `
   -r 1s `
   -ramp 1ms `
+  -warmup 5s `
+  -drain 10s `
   -d 5m
 ```
 
@@ -572,9 +586,11 @@ go run .\cmd\benchmark `
   -room $RoomId `
   -sid $Sid `
   -c 60000 `
-  -active 0.001 `
+  -active-clients 60 `
   -r 1s `
   -ramp 1ms `
+  -warmup 5s `
+  -drain 10s `
   -d 5m
 ```
 
@@ -793,11 +809,27 @@ Set-Location D:\GoProjects\live-stream
 ```powershell
 .\scripts\load-test.ps1 `
   -Connections 1000 `
-  -ActiveRatio 0.01 `
+  -ActiveClients 10 `
   -SendInterval 1s `
   -RampInterval 2ms `
+  -Warmup 3s `
+  -Drain 5s `
   -Duration 2m
 ```
+
+`-ActiveClients 10` 表示只有 10 个连接携带登录 `sid` 并发送弹幕，其余 990 个连接按游客监听。也可以继续使用 `-ActiveRatio 0.01`，脚本会把它换算为确定数量；显式的 `-ActiveClients` 优先级更高。只测试建连时使用：
+
+```powershell
+.\scripts\load-test.ps1 `
+  -Connections 1000 `
+  -ActiveClients 0 `
+  -Warmup 3s `
+  -Drain 5s `
+  -Duration 30s `
+  -SkipHistoryCheck
+```
+
+压测器会等所有 Dial 完成后再开始发送。`Warmup` 用于让在线人数广播和连接写队列稳定，`Drain` 用于停止发送后继续接收 Kafka/Redis 返回的最后一批广播。
 
 如果已经配置 SSH 密钥，可以让脚本自动建立和关闭隧道：
 
@@ -816,13 +848,32 @@ IPv4 直连示例：
   -BaseUrl "http://SERVER_IPV4:9000" `
   -WebSocketUrl "ws://SERVER_IPV4:9000/api/v1/ws" `
   -Connections 1000 `
+  -ActiveClients 10 `
+  -Warmup 3s `
+  -Drain 5s `
   -Duration 2m
 ```
+
+IPv6 直连时，WebSocket 地址中的 IPv6 必须放在方括号中：
+
+```powershell
+.\scripts\load-test.ps1 `
+  -BaseUrl "http://[SERVER_IPV6]:9000" `
+  -WebSocketUrl "ws://[SERVER_IPV6]:9000/api/v1/ws" `
+  -Connections 1000 `
+  -ActiveClients 10 `
+  -Warmup 3s `
+  -Drain 5s `
+  -Duration 2m
+```
+
+SSH 隧道适合 10～100 个连接的功能验证。评估 1,000 个以上连接时应优先直连，并把 TCP 9000 的云安全组/防火墙来源限制为压测机公网 IP。
 
 脚本只有在以下条件全部满足时才输出 `AUTOMATED LOAD TEST PASSED`：
 
 - 注册、登录、创建和开播接口全部成功；
 - benchmark 退出码为 0；
 - benchmark 的 `errors` 为 0；
+- Dial 成功数等于目标连接数；
 - 发送模式下 `sent` 和 `received` 都大于 0；
 - 历史消息中能够查询到 `bench-*` 弹幕。
