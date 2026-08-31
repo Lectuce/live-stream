@@ -2,6 +2,7 @@ package ws
 
 import (
 	"live-stream/internal/auth"
+	"live-stream/internal/config"
 	"live-stream/internal/repo"
 	"net/http"
 	"strconv"
@@ -10,13 +11,31 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+
+func checkOrigin(r *http.Request) bool {
+	if config.GlobalConfig == nil {
+		return false
+	}
+
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+
+	for _, allowed := range config.GlobalConfig.Server.AllowedOrigins {
+		if origin == allowed {
+			return true
+		}
+	}
+
+	return false
+}
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
+	CheckOrigin: checkOrigin,
 }
 
 func ServeWs(hub *Hub, c *gin.Context) {

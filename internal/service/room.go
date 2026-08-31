@@ -43,7 +43,11 @@ func CreateRoom(c context.Context, ownerID uint64, req *model.CreateRoomRequest)
 
 func ListRooms(c context.Context) ([]model.HotRoomDTO, error) {
 	var rooms []model.HotRoomDTO
-	rooms, err := repo.SelectAllRoomsByLikes(c, config.GlobalConfig.StreamList.Count)
+	limit := config.GlobalConfig.StreamList.Count
+	if limit <= 0 {
+		limit = 20
+	}
+	rooms, err := repo.SelectAllRoomsByLikes(c, limit)
 	if err != nil {
 		log.Printf("list rooms failed: %v", err)
 		return nil, err

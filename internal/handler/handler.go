@@ -70,7 +70,7 @@ func LoginHandler(c *gin.Context) {
 		7*24*3600,
 		"/",
 		"",
-		true,
+		true, // 本地测试为false
 		true,
 	)
 
@@ -133,7 +133,7 @@ func CreateRoom(c *gin.Context) {
 		return
 	}
 	var req model.CreateRoomRequest
-	err := c.ShouldBind(req)
+	err := c.ShouldBind(&req)
 	if err != nil {
 		log.Printf("capture create room params failed: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -176,7 +176,7 @@ func ListRoom(c *gin.Context) {
 
 func GetRoomDetail(c *gin.Context) {
 	// 从url路径取字符串
-	roomIDStr := c.Param("id")
+	roomIDStr := c.Param("room_id")
 	// 转uint64（和repo里roomID类型保持一致）
 	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
 	detail, err := service.RoomDetail(c, roomID)
@@ -209,7 +209,12 @@ func UpdateRoom(c *gin.Context) {
 		return
 	}
 	var updateRoomRequest model.UpdateRoomRequest
-	c.ShouldBind(updateRoomRequest)
+	if err = c.ShouldBind(&updateRoomRequest); err != nil {
+	c.JSON(http.StatusBadRequest, gin.H{
+		"message": "请求参数错误",
+	})
+	return		
+	}
 	room, err := service.UpdateRoom(c, &updateRoomRequest, uid, roomID)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidRoomID) {
@@ -248,7 +253,7 @@ func StartRoom(c *gin.Context) {
 	}
 
 	// 路径参数 room_id
-	roomIDStr := c.Param("id")
+	roomIDStr := c.Param("room_id")
 	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -269,11 +274,20 @@ func StartRoom(c *gin.Context) {
 	if err != nil {
 		log.Printf("start room failed: %v", err)
 		if errors.Is(err, service.ErrInvalidRoomID) {
-			c.JSON(http.StatusBadRequest, gin.H{"message": "房间不存在"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"message": "房间不存在",
+			})
+			return
 		} else if errors.Is(err, service.ErrNotRoomOwner) {
-			c.JSON(http.StatusForbidden, gin.H{"message": "仅房主可开播"})
+			c.JSON(http.StatusForbidden, gin.H{
+				"message": "仅房主可开播",
+			})
+			return
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"message": "开播失败"})
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"message": "开播失败",
+			})
+			return
 		}
 		return
 	}
@@ -291,7 +305,7 @@ func StopRoom(c *gin.Context) {
 		return
 	}
 	// 路径参数 room_id
-	roomIDStr := c.Param("id")
+	roomIDStr := c.Param("room_id")
 	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -302,11 +316,20 @@ func StopRoom(c *gin.Context) {
 	err = service.StopLiveService(c.Request.Context(), roomID, uid)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidRoomID) {
-			c.JSON(http.StatusBadRequest, gin.H{"message": "房间不存在"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"message": "房间不存在",
+			})
+			return
 		} else if errors.Is(err, service.ErrNotRoomOwner) {
-			c.JSON(http.StatusForbidden, gin.H{"message": "仅房主可开播"})
+			c.JSON(http.StatusForbidden, gin.H{
+				"message": "仅房主可开播",
+			})
+			return
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"message": "开播失败"})
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"message": "开播失败",
+			})
+			return
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{

@@ -21,5 +21,11 @@ kafka:
 stream_list:
   count: 20
 
+server:
+  allowed_origins:
+    - "http://localhost:5173"
+    - "http://localhost:3000"
+    - "https://你的正式前端域名.com"
+
 
   

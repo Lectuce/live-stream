@@ -5,4 +5,5 @@ type Config struct {
 	Redis      RedisConfig      `yaml:"redis" mapstructure:"redis"`
 	Kafka      KafkaConfig      `yaml:"kafka" mapstructure:"kafka"`
 	StreamList StreamListConfig `yaml:"stream_list" mapstructure:"stream_list"`
+	Server     ServerConfig     `yaml:"server" mapstructure:"server"`
 }
