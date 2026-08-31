@@ -44,12 +44,6 @@ func (h *Hub) Stop() {
 	h.cancel()
 }
 
-var bufPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 0, 512)
-	},
-}
-
 func (h *Hub) broadcastWorker() {
 	for {
 		select {
@@ -67,7 +61,7 @@ func (h *Hub) Run() {
 	}
 
 	log.Printf("hub started, workerNum=%d", h.workerNum)
-	for i := 0; i < h.workerNum; i++ {
+	for {
 		select {
 		case <-h.ctx.Done():
 			log.Println("hub exit signal received, stop run")
@@ -92,17 +86,14 @@ func (h *Hub) handleRegister(client *Client) {
 		}
 		h.rooms[client.RoomID] = room
 	}
-	h.mu.Unlock()
-
-	// 标记为在线（true）
-	h.mu.Lock()
-	room.clients[client] = true
-	room.onlineUsers[client.UserID]++
-	h.mu.Unlock()
-
-	room.mu.RLock()
+	room.mu.Lock()
+	if _, exists := room.clients[client]; !exists {
+		room.clients[client] = true
+		room.onlineUsers[client.UserID]++
+	}
 	onlineCount := len(room.clients)
-	room.mu.RUnlock()
+	room.mu.Unlock()
+	h.mu.Unlock()
 
 	msg := model.Message{
 		Type:   model.MsgTypeSystem,
@@ -120,39 +111,40 @@ func (h *Hub) handleRegister(client *Client) {
 }
 
 func (h *Hub) handleUnregister(client *Client) {
-	// 全局锁：仅取房间指针 + 后续空房间删除
 	h.mu.Lock()
 	room, ok := h.rooms[client.RoomID]
-	h.mu.Unlock()
-
 	if !ok {
+		h.mu.Unlock()
+		client.closeSend()
 		return
 	}
-	// 房间级写锁：只操作当前房间的客户端集合
+
 	room.mu.Lock()
+	if _, exists := room.clients[client]; !exists {
+		room.mu.Unlock()
+		h.mu.Unlock()
+		client.closeSend()
+		return
+	}
 	delete(room.clients, client)
 	room.onlineUsers[client.UserID]--
 	if room.onlineUsers[client.UserID] <= 0 {
 		delete(room.onlineUsers, client.UserID)
 	}
 	clientCount := len(room.clients)
-	room.mu.Unlock()
-
-	// 房间空了，全局锁删除房间条目
+	onlineCount := clientCount
+	client.closeSend()
 	if clientCount == 0 {
-		h.mu.Lock()
 		delete(h.rooms, client.RoomID)
-		h.mu.Unlock()
 	}
-	room.mu.RLock()
-	onlineCount := len(room.clients)
-	room.mu.RUnlock()
+	room.mu.Unlock()
+	h.mu.Unlock()
 
 	msg := model.Message{
 		Type:   model.MsgTypeSystem,
 		RoomID: client.RoomID,
 		Data: map[string]interface{}{
-			"sub_type":     "onliene_count",
+			"sub_type":     "online_count",
 			"online_count": onlineCount,
 		},
 	}
@@ -166,34 +158,28 @@ func (h *Hub) handleUnregister(client *Client) {
 func (h *Hub) broadcastToRoom(msg *Message) {
 	h.mu.Lock()
 	room, ok := h.rooms[msg.RoomID]
-	h.mu.Unlock()
 	if !ok {
+		h.mu.Unlock()
 		return
 	}
 	room.mu.RLock()
+	h.mu.Unlock()
 	clients := make([]*Client, 0, len(room.clients))
 	for c := range room.clients {
 		clients = append(clients, c)
 	}
 	room.mu.RUnlock()
 
-	// 从池里取缓冲区
-	buf := bufPool.Get().([]byte)
-	// 序列化到复用的缓冲区
-	buf = buf[:0] // 重置长度，底层数组复用
-	marshalBuf, err := json.Marshal(msg)
-	if err == nil {
-		buf = append(buf, marshalBuf...)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("marshal websocket broadcast failed: %v", err)
+		return
 	}
 
-	data, _ := json.Marshal(msg)
-	for cli := range room.clients {
-		select {
-		case cli.send <- data:
-		default:
+	for _, cli := range clients {
+		if !cli.trySend(data) {
 			log.Printf("client send channel full, drop client room=%d user=%d", cli.RoomID, cli.UserID)
-			h.unregister <- cli
+			cli.signalUnregister()
 		}
 	}
-	bufPool.Put(buf)
 }

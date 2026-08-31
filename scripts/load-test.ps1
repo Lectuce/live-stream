@@ -189,11 +189,23 @@ function Invoke-Benchmark {
 
     Write-Step "Running WebSocket benchmark"
     $benchmarkLines = @()
-    & go @arguments 2>&1 |
-        Tee-Object -Variable benchmarkLines |
-        ForEach-Object { Write-Host $_ }
-    if ($LASTEXITCODE -ne 0) {
-        throw "WebSocket benchmark exited with code $LASTEXITCODE"
+    $benchmarkExitCode = 0
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Go's log package writes normal benchmark output to stderr. Windows
+        # PowerShell 5.1 wraps native stderr as NativeCommandError when the
+        # global preference is Stop, so temporarily keep native logs flowing.
+        $ErrorActionPreference = "Continue"
+        & go @arguments 2>&1 |
+            Tee-Object -Variable benchmarkLines |
+            ForEach-Object { Write-Host $_ }
+        $benchmarkExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($benchmarkExitCode -ne 0) {
+        throw "WebSocket benchmark exited with code $benchmarkExitCode"
     }
 
     $finalLine = $benchmarkLines |
@@ -348,7 +360,8 @@ try {
         -Body @{ title = "Benchmark Room $stamp" }
     $script:RoomId = [uint64]$createRoomResult.data.room_id
     if ($script:RoomId -eq 0) {
-        throw "Create-room response did not contain a valid room_id"
+        $createRoomJson = $createRoomResult | ConvertTo-Json -Depth 10 -Compress
+        throw "Create-room response did not contain a valid room_id. Response: $createRoomJson"
     }
 
     Write-Step "Starting room $($script:RoomId)"
