@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"live-stream/internal/model"
 	"live-stream/internal/repo"
 	"log"
@@ -26,6 +27,9 @@ func UserReigister(ctx context.Context, registerRequest *model.RegisterRequest) 
 		PasswordHash: hash,
 	}
 	reuser, err := repo.SelectUserByEmail(ctx, &user)
+	if err != nil {
+		return nil, fmt.Errorf("select user by email: %w", err)
+	}
 	if reuser != nil {
 		return nil, ErrInvalidEamil
 	}
@@ -33,6 +37,7 @@ func UserReigister(ctx context.Context, registerRequest *model.RegisterRequest) 
 	reuser, err = repo.CreateUser(ctx, &user)
 	if err != nil {
 		log.Printf("create user failed: %v", err)
+		return nil, fmt.Errorf("create user: %w", err)
 	}
 	return reuser, nil
 

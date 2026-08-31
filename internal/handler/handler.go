@@ -30,7 +30,12 @@ func RegisterHandler(c *gin.Context) {
 				"message": "邮箱已被注册",
 			})
 			log.Printf("register failed: %v", err)
+			return
 		}
+		log.Printf("register failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "注册失败",
+		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -210,10 +215,10 @@ func UpdateRoom(c *gin.Context) {
 	}
 	var updateRoomRequest model.UpdateRoomRequest
 	if err = c.ShouldBind(&updateRoomRequest); err != nil {
-	c.JSON(http.StatusBadRequest, gin.H{
-		"message": "请求参数错误",
-	})
-	return		
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "请求参数错误",
+		})
+		return
 	}
 	room, err := service.UpdateRoom(c, &updateRoomRequest, uid, roomID)
 	if err != nil {
@@ -289,7 +294,6 @@ func StartRoom(c *gin.Context) {
 			})
 			return
 		}
-		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"message": "开播成功",

@@ -81,7 +81,7 @@ func StartKafkaConsumer(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			if len(msgs) > 0 {
-				processBath(ctx, reader, batch, rawMsgs, msgs, maxRetry)
+				processBatch(ctx, reader, batch, rawMsgs, msgs, maxRetry)
 				batch = batch[:0]
 				msgs = msgs[:0]
 				rawMsgs = rawMsgs[:0]
@@ -126,7 +126,7 @@ func StartKafkaConsumer(ctx context.Context) error {
 			rawMsgs = append(rawMsgs, danmaMsg)
 			msgs = append(msgs, msg)
 			if len(rawMsgs) >= batchSize {
-				processBath(ctx, reader, batch, rawMsgs, msgs, maxRetry)
+				processBatch(ctx, reader, batch, rawMsgs, msgs, maxRetry)
 				batch = batch[:0]
 				msgs = msgs[:0]
 				rawMsgs = rawMsgs[:0]
@@ -137,7 +137,7 @@ func StartKafkaConsumer(ctx context.Context) error {
 	}
 }
 
-func processBath(ctx context.Context, reader *kafka.Reader, batch []model.Danma, rawMsgs []model.Message, msgs []kafka.Message, maxRetry int) {
+func processBatch(ctx context.Context, reader *kafka.Reader, batch []model.Danma, rawMsgs []model.Message, msgs []kafka.Message, maxRetry int) {
 
 	if len(batch) > 0 {
 		var insertErr error
