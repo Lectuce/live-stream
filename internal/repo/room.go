@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"live-stream/internal/dao"
 	"live-stream/internal/model"
@@ -96,6 +97,10 @@ func SelectRoomByRoomID(ctx context.Context, roomID uint64) (*model.Room, error)
 
 func SelectRoomByOwnerID(ctx context.Context, ownerID uint64) (*model.Room, error) {
 	resroom, err := gorm.G[model.Room](dao.SC.Db).Where("owner_id = ?", ownerID).First(ctx)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// 没有房间是正常结果，表示用户可以创建房间
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("fatal error select room by owner id: %w", err)
 	}
@@ -124,7 +129,7 @@ func SelectAllRoomsByLikes(ctx context.Context, limit int) ([]model.HotRoomDTO, 
 }
 
 func SelectRoomDetail(ctx context.Context, roomID uint64) (model.RoomDetail, error) {
-	sql := `SELECT room.room_title, room.owner_id, room.started_at, room.status, u.user_name as owner_username, room.like_count
+	sql := `SELECT room.room_title, room.owner_id, room.start_at, room.status, u.user_name as owner_username, room.like_count
 			FROM rooms room
 			LEFT JOIN users u ON  u.user_id= room.owner_id
 			WHERE room.room_id = ?
@@ -142,7 +147,7 @@ func StartLive(ctx context.Context, roomID uint64, title string) error {
 	room := model.Room{
 		Status:    1,
 		RoomTitle: title,
-		StartedAt: time.Now(),
+		StartAt:   time.Now(),
 	}
 	rowsAffected, err := gorm.G[model.Room](dao.SC.Db).Where("room_id = ?", roomID).Updates(ctx, room)
 	if err != nil {

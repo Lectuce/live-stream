@@ -80,7 +80,7 @@ func StartKafkaConsumer(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if len(batch) > 0 {
+			if len(msgs) > 0 {
 				processBath(ctx, reader, batch, rawMsgs, msgs, maxRetry)
 				batch = batch[:0]
 				msgs = msgs[:0]
