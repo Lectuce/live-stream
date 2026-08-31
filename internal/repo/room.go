@@ -104,9 +104,9 @@ func SelectRoomByOwnerID(ctx context.Context, ownerID uint64) (*model.Room, erro
 
 func SelectAllRoomsByLikes(ctx context.Context, limit int) ([]model.HotRoomDTO, error) {
 	sql := `
-		SELECT room.room_id, room.room_title, room.owner_id, u.username as owner_username, room.like_count
+		SELECT room.room_id, room.room_title, room.owner_id, u.user_name as owner_username, room.like_count
 		FROM rooms room
-		LEFT JOIN users u ON u.id = room.owner_id
+		LEFT JOIN users u ON  u.user_id= room.owner_id
 		WHERE room.status = ?
 		ORDER BY room.like_count DESC
 		LIMIT ?
@@ -124,9 +124,9 @@ func SelectAllRoomsByLikes(ctx context.Context, limit int) ([]model.HotRoomDTO, 
 }
 
 func SelectRoomDetail(ctx context.Context, roomID uint64) (model.RoomDetail, error) {
-	sql := `SELECT room.room_title, room.owner_id, room.started_at, room.status, u.username as owner_username, room.like_count
+	sql := `SELECT room.room_title, room.owner_id, room.started_at, room.status, u.user_name as owner_username, room.like_count
 			FROM rooms room
-			LEFT JOIN users u ON u.id = room.owner_id
+			LEFT JOIN users u ON  u.user_id= room.owner_id
 			WHERE room.room_id = ?
 	`
 	detail, err := gorm.G[model.RoomDetail](dao.SC.Db).Raw(sql, roomID).First(ctx)
@@ -142,7 +142,7 @@ func StartLive(ctx context.Context, roomID uint64, title string) error {
 	room := model.Room{
 		Status:    1,
 		RoomTitle: title,
-		StartAt:   time.Now(),
+		StartedAt: time.Now(),
 	}
 	rowsAffected, err := gorm.G[model.Room](dao.SC.Db).Where("room_id = ?", roomID).Updates(ctx, room)
 	if err != nil {

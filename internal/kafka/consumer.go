@@ -84,6 +84,7 @@ func StartKafkaConsumer(ctx context.Context) error {
 				processBath(ctx, reader, batch, rawMsgs, msgs, maxRetry)
 				batch = batch[:0]
 				msgs = msgs[:0]
+				rawMsgs = rawMsgs[:0]
 			}
 		default:
 			msg, err := reader.FetchMessage(ctx)
@@ -128,6 +129,7 @@ func StartKafkaConsumer(ctx context.Context) error {
 				processBath(ctx, reader, batch, rawMsgs, msgs, maxRetry)
 				batch = batch[:0]
 				msgs = msgs[:0]
+				rawMsgs = rawMsgs[:0]
 				ticker.Reset(maxWait)
 			}
 
@@ -138,17 +140,39 @@ func StartKafkaConsumer(ctx context.Context) error {
 func processBath(ctx context.Context, reader *kafka.Reader, batch []model.Danma, rawMsgs []model.Message, msgs []kafka.Message, maxRetry int) {
 
 	if len(batch) > 0 {
-		for i := 0; i < maxRetry; i++ {
-			err := repo.BatchCreateDanma(ctx, batch)
-			if err != nil {
+		var insertErr error
+
+		for attempt := 0; attempt < maxRetry; attempt++ {
+			insertErr = repo.BatchCreateDanma(ctx, batch)
+
+			// 成功：立即结束重试，继续 Redis 发布和 offset 提交
+			if insertErr == nil {
 				break
 			}
 
-			if i == maxRetry-1 {
-				log.Printf("batch insert finally failed, count=%d, err=%v", len(batch), err)
+			log.Printf(
+				"batch insert failed, attempt=%d/%d, count=%d, err=%v",
+				attempt+1,
+				maxRetry,
+				len(batch),
+				insertErr,
+			)
+
+			// 最后一次仍失败：不能发布 Redis，也不能提交 offset
+			if attempt == maxRetry-1 {
+				log.Printf(
+					"batch insert finally failed, count=%d, err=%v",
+					len(batch),
+					insertErr,
+				)
 				return
 			}
-			time.Sleep(time.Second)
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
 		}
 	}
 

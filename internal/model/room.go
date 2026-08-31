@@ -9,7 +9,7 @@ type Room struct {
 	OwnerID   uint64    `json:"owner_id" mapstructure:"owner_id"`
 	CreatedAt time.Time `json:"created_at" mapstructure:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" mapstructure:"updated_at"`
-	StartAt   time.Time `json:"strated_at" mapstructure:"strated_at"`
+	StartedAt time.Time `json:"strated_at" mapstructure:"strated_at"`
 	LikeCount int64     `json:"like_count" gorm:"column:like_count"`
 	// 直播相关地址
 	PushURL string `json:"-" mapstructure:"push_url"`        // 推流地址，json:"-" 不序列化返回前端（敏感）
