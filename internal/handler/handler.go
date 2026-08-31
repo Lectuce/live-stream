@@ -155,6 +155,9 @@ func CreateRoom(c *gin.Context) {
 			return
 		}
 		log.Printf("create room failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "房间创建失败",
+		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{

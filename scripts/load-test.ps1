@@ -33,6 +33,7 @@ $script:TunnelProcess = $null
 $script:RoomStarted = $false
 $script:RoomId = [uint64]0
 $script:Sid = ""
+$script:WebSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 
 function Write-Step {
     param([string]$Message)
@@ -101,9 +102,25 @@ function Invoke-JsonApi {
         $request.Body = $Body | ConvertTo-Json -Compress
     }
     if (-not [string]::IsNullOrWhiteSpace($Sid)) {
-        $request.Headers = @{ Cookie = "sid=$Sid" }
+        $request.WebSession = $script:WebSession
     }
-    return Invoke-RestMethod @request
+    try {
+        return Invoke-RestMethod @request
+    }
+    catch {
+        $statusCode = "unknown"
+        if ($null -ne $_.Exception.Response) {
+            $statusCode = [int]$_.Exception.Response.StatusCode
+        }
+        $responseBody = ""
+        if ($null -ne $_.ErrorDetails) {
+            $responseBody = $_.ErrorDetails.Message
+        }
+        if ([string]::IsNullOrWhiteSpace($responseBody)) {
+            $responseBody = $_.Exception.Message
+        }
+        throw "API request failed: $Method $Uri; status=$statusCode; response=$responseBody"
+    }
 }
 
 function Start-SshTunnel {
@@ -303,6 +320,17 @@ try {
         throw "Login response did not contain a sid cookie"
     }
     $script:Sid = $sidMatch.Groups[1].Value
+    if ($script:Sid -notmatch "^[0-9a-fA-F]{64}$") {
+        throw "Login response contained an invalid sid value (length=$($script:Sid.Length))"
+    }
+
+    # Windows PowerShell can discard a manually supplied Cookie header.
+    # Put sid in a CookieContainer and mark this client-side copy non-Secure so
+    # it is sent through the local HTTP SSH tunnel. The server-side cookie
+    # remains Secure for browser use.
+    $sessionCookie = New-Object System.Net.Cookie("sid", $script:Sid, "/")
+    $sessionCookie.Secure = $false
+    $script:WebSession.Cookies.Add([Uri]$BaseUrl, $sessionCookie)
 
     $me = Invoke-JsonApi `
         -Method Get `

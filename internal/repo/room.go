@@ -19,7 +19,7 @@ func CreateRoom(ctx context.Context, room *model.Room) (*model.Room, error) {
 	results := gorm.WithResult()
 	err := gorm.G[model.Room](dao.SC.Db, results).Create(ctx, room)
 	if err != nil {
-		panic(fmt.Errorf("fatal error create user: %w", err))
+		return nil, fmt.Errorf("fatal error create room: %w", err)
 	}
 	if results.RowsAffected == 0 {
 		return nil, fmt.Errorf("no rows inserted")
@@ -144,10 +144,11 @@ func SelectRoomDetail(ctx context.Context, roomID uint64) (model.RoomDetail, err
 }
 
 func StartLive(ctx context.Context, roomID uint64, title string) error {
+	now := time.Now()
 	room := model.Room{
 		Status:    1,
 		RoomTitle: title,
-		StartAt:   time.Now(),
+		StartAt:   &now,
 	}
 	rowsAffected, err := gorm.G[model.Room](dao.SC.Db).Where("room_id = ?", roomID).Updates(ctx, room)
 	if err != nil {
