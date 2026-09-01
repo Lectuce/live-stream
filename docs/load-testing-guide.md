@@ -691,6 +691,15 @@ docker stats
 - Redis CPU、内存和网络；
 - MySQL 连接数、慢查询和写入延迟。
 
+服务同时在 `127.0.0.1:6060` 提供仅本机可访问的诊断接口：
+
+```bash
+curl http://127.0.0.1:6060/debug/ws/metrics
+go tool pprof "http://127.0.0.1:6060/debug/pprof/profile?seconds=60"
+```
+
+`/debug/ws/metrics` 包含连接数、广播数、成功入队数、队列满次数、写错误、关闭客户端数、广播耗时直方图和客户端队列总深度。服务每 10 秒还会汇总输出队列满、写错误和关闭客户端计数，不会为每个断开的客户端逐条打印日志。
+
 ## 16. 测试结束与清理
 
 ### 16.1 停止直播
@@ -810,12 +819,15 @@ Set-Location D:\GoProjects\live-stream
 .\scripts\load-test.ps1 `
   -Connections 1000 `
   -ActiveClients 10 `
+	-MaxLossPercent 0 `
   -SendInterval 1s `
   -RampInterval 2ms `
   -Warmup 3s `
   -Drain 5s `
   -Duration 2m
 ```
+
+`-MaxLossPercent` 默认是 `0`，即任何投递缺口都会使测试失败；例如 `-MaxLossPercent 0.1` 允许最多 0.1% 的投递缺失。接收数大于期望投递数会按重复投递直接失败。压测消息携带纳秒发送时间，输出中的 `latency_p50`、`latency_p95`、`latency_p99` 来自固定桶直方图，不会随消息量保存延迟样本。
 
 `-ActiveClients 10` 表示只有 10 个连接携带登录 `sid` 并发送弹幕，其余 990 个连接按游客监听。也可以继续使用 `-ActiveRatio 0.01`，脚本会把它换算为确定数量；显式的 `-ActiveClients` 优先级更高。只测试建连时使用：
 
@@ -876,4 +888,5 @@ SSH 隧道适合 10～100 个连接的功能验证。评估 1,000 个以上连�
 - benchmark 的 `errors` 为 0；
 - Dial 成功数等于目标连接数；
 - 发送模式下 `sent` 和 `received` 都大于 0；
+- 接收数不大于期望投递数，且投递损失不超过 `MaxLossPercent`；
 - 历史消息中能够查询到 `bench-*` 弹幕。

@@ -433,3 +433,225 @@ go build -o live-stream .
 文件：`internal/kafka/producer.go`、`main.go`
 
 Producer 初始化不再只创建异步 Writer 就打印成功。启动时会在 10 秒超时内实际连接 `danmu_topic` 的 partition 0 leader；Broker、advertised listener 或 topic 不可达时返回明确错误。`main.go` 现在检查该错误并停止启动，避免出现 HTTP 服务正常、Kafka 实际不可用的假健康状态。
+
+## 13. WebSocket 压测可信度、写路径和可观测性优化
+
+本轮修改先完善压测判定和可观测性，再调整慢客户端治理与广播调度。多 Gateway、消息 ACK、历史补拉和 Outbox 不在本轮单机优化范围内。
+
+### 13.1 严格校验投递损失和重复投递
+
+文件：`scripts/load-test.ps1`
+
+新增参数：
+
+```powershell
+[ValidateRange(0.0, 100.0)]
+[double]$MaxLossPercent = 0.0
+```
+
+脚本现在会从 benchmark 的 `[FINAL]` 行同时解析 `received` 和 `expected`，计算：
+
+```text
+missing = max(0, expected - received)
+lossPercent = missing * 100 / expected
+```
+
+发送模式下新增两项严格检查：
+
+- `received > expected` 时按重复投递失败；
+- `lossPercent > MaxLossPercent` 时按投递损失超限失败。
+
+`MaxLossPercent` 默认值为 0，即默认要求零投递缺口。可按需要放宽，例如：
+
+```powershell
+# 严格零缺口
+.\scripts\load-test.ps1 -MaxLossPercent 0
+
+# 最多允许 0.1% 缺失
+.\scripts\load-test.ps1 -MaxLossPercent 0.1
+```
+
+最终摘要新增 `Expected deliveries`、`Missing deliveries` 和 `Loss`，避免只检查“至少收到一条消息”造成误判。
+
+### 13.2 端到端延迟固定桶统计
+
+文件：`cmd/benchmark/main.go`、`cmd/benchmark/main_test.go`
+
+压测弹幕内容改为：
+
+```text
+bench-{clientID}-{sequence}-{unixNano}
+```
+
+接收端从最后一个字段解析发送时间，计算从客户端发送到同一压测进程收到 WebSocket 广播的端到端延迟。延迟使用固定桶和原子计数器统计，不保存逐条样本，因此内存不会随投递次数线性增长。
+
+周期输出和最终输出新增：
+
+```text
+latency_samples
+latency_p50
+latency_p95
+latency_p99
+```
+
+新增测试覆盖时间戳格式校验和固定桶分位数计算。
+
+### 13.3 区分发送队列关闭与队列满
+
+文件：`internal/ws/client.go`、`internal/ws/hub.go`
+
+`trySend` 不再返回无法区分原因的布尔值，改为明确状态：
+
+```text
+enqueueOK
+enqueueClosed
+enqueueFull
+```
+
+处理语义如下：
+
+- `enqueueOK`：记录成功入队；
+- `enqueueClosed`：连接已经进入注销流程，不记录队列满；
+- `enqueueFull`：增加队列满计数，立即关闭 Socket，并且只发送一次注销信号。
+
+队列满时先关闭 Socket，可以打断可能阻塞在系统调用中的写协程。逐客户端的 `channel full` 和写错误日志已经移除，避免大量连接同时退出时形成日志风暴。
+
+### 13.4 WriteDeadline 和关闭状态
+
+文件：`internal/ws/client.go`
+
+每次 WebSocket 写入前设置 5 秒 deadline：
+
+```go
+const writeWait = 5 * time.Second
+```
+
+`closeConnection` 会先用原子状态标记连接正在关闭，再关闭底层 Socket。`readPump` 和 `writePump` 的退出清理也调整为先标记并关闭连接，再发送注销信号。
+
+只有非主动关闭状态下的 `SetWriteDeadline` 或 `WriteMessage` 错误才会计入 `ws_write_errors_total`。这样 readPump 主动关闭连接后产生的预期写失败不会被当作真实运行错误。
+
+### 13.5 按房间固定广播 Worker
+
+文件：`internal/ws/hub.go`、`internal/ws/redis_subscriber.go`
+
+原来的单个 `broadcastTasks` channel 由多个 worker 共同消费，同一房间连续消息可能被不同 worker 并发处理。现在改为按房间分片的队列：
+
+```text
+queueIndex = roomID % workerCount
+```
+
+每个队列只由一个 worker 消费，Redis Subscriber 统一通过 `enqueueBroadcast` 路由消息。效果如下：
+
+- 同一房间始终进入同一个队列，保持处理顺序；
+- 不同房间可以由不同 worker 并行广播；
+- 单个超大房间仍然受单 worker 扇出速度限制，不等同于解决单房间的无限扩展问题。
+
+在线人数是可覆盖的状态更新，继续由独立 presence worker 直接处理，不占用弹幕事件队列。
+
+### 13.6 WebSocket 指标和本机 pprof
+
+文件：`internal/ws/metrics.go`、`main.go`
+
+新增指标：
+
+```text
+ws_connections
+ws_broadcast_messages_total
+ws_delivery_enqueued_total
+ws_queue_full_total
+ws_write_errors_total
+ws_closed_clients_total
+ws_broadcast_duration
+ws_client_queue_depth
+```
+
+`ws_broadcast_duration` 使用固定耗时桶；`ws_client_queue_depth` 在获取快照时汇总当前房间内所有客户端的待发送队列深度。服务每 10 秒输出一次连接数、队列满、写错误、关闭客户端数和队列深度汇总。
+
+诊断服务只监听本机：
+
+```text
+127.0.0.1:6060
+```
+
+使用方法：
+
+```bash
+curl http://127.0.0.1:6060/debug/ws/metrics
+go tool pprof "http://127.0.0.1:6060/debug/pprof/profile?seconds=60"
+```
+
+应用 HTTP 服务同步改为显式 `http.Server`，收到退出信号后会在 10 秒超时内关闭业务 HTTP 服务和诊断服务，不再依赖无法主动关闭的 `gin.Engine.Run`。
+
+### 13.7 PreparedMessage 基准结论
+
+文件：`internal/ws/prepared_message_benchmark_test.go`
+
+增加了真实 loopback WebSocket 基准，模拟约 1KB 消息向 32 个连接扇出。基准严格按生产语义执行：每条广播创建一次 PreparedMessage，仅在该条消息对应的连接之间复用。
+
+当前未启用 WebSocket 压缩的配置下，稳定轮次结果约为：
+
+```text
+WriteMessage          411～415 μs/op   约 70 KB/op   160 allocs/op
+WritePreparedMessage  421～435 μs/op   约 84 KB/op   175 allocs/op
+```
+
+PreparedMessage 在本机结果中约慢 2%～6%，同时增加约 19% 的分配字节数和 15 次分配。因此本轮没有把 PreparedMessage 留在生产写路径，继续使用“一次 JSON Marshal、所有客户端共享同一字节切片”的实现。基准文件保留，后续启用压缩、升级依赖或改变消息尺寸后可以重新评估。
+
+复现命令：
+
+```bash
+go test ./internal/ws -run '^$' -bench '^BenchmarkWebSocketFanoutFrame$' -benchtime=2s -count=3
+```
+
+### 13.8 测试覆盖与本地验证
+
+文件：`internal/ws/hub_test.go`、`cmd/benchmark/main_test.go`
+
+新增或扩展测试覆盖：
+
+- 队列正常、关闭、满三种返回状态；
+- 队列满时连接立即进入关闭状态，并且只发送注销信号；
+- 广播只序列化一次并在客户端之间共享 payload；
+- 同一房间稳定映射到同一广播队列；
+- 指标 HTTP 接口和广播耗时计数；
+- benchmark 时间戳解析和 P50/P95/P99 固定桶统计。
+
+已执行并通过：
+
+```text
+go test ./...
+go vet ./...
+go test -count=20 ./internal/ws ./cmd/benchmark
+PowerShell AST 语法检查
+git diff --check
+```
+
+本机缺少 GCC，Go race detector 依赖的 CGO 无法启用，因此仍需在具备 C 编译器的 Linux 环境执行：
+
+```bash
+go test -race ./internal/ws ./cmd/benchmark
+```
+
+本轮没有启动完整的 MySQL、Redis、Kafka 和后端环境，因此尚未执行新的全链路压力测试。部署新二进制后应先执行严格零缺口测试，再采集 CPU profile：
+
+```powershell
+.\scripts\load-test.ps1 -Connections 1000 -ActiveClients 10 -MaxLossPercent 0
+```
+
+### 13.9 本轮修改文件清单
+
+| 文件 | 修改内容 |
+|---|---|
+| `scripts/load-test.ps1` | 严格损失阈值、重复投递校验、最终损失摘要 |
+| `cmd/benchmark/main.go` | 发送时间戳、固定桶延迟 P50/P95/P99 |
+| `cmd/benchmark/main_test.go` | 时间戳和延迟直方图测试 |
+| `cmd/benchmark/README.md` | 延迟指标说明 |
+| `internal/ws/client.go` | 明确入队状态、关闭标记、WriteDeadline、聚合写错误 |
+| `internal/ws/hub.go` | 慢客户端治理、按房间分片广播、指标采集 |
+| `internal/ws/redis_subscriber.go` | 统一调用按房间路由入口 |
+| `internal/ws/metrics.go` | WebSocket 指标快照、HTTP 接口和周期汇总日志 |
+| `internal/ws/hub_test.go` | 队列状态、慢客户端、分片和指标测试 |
+| `internal/ws/prepared_message_benchmark_test.go` | PreparedMessage 对比基准 |
+| `main.go` | 本机 pprof/指标服务及 HTTP 优雅退出 |
+| `docs/load-testing-guide.md` | 严格损失、延迟指标、服务指标和 pprof 使用说明 |
+| `docs/automated-load-test-change-log.md` | 本节修改记录 |

@@ -2,17 +2,27 @@ package ws
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
 	"live-stream/internal/kafka"
 	"live-stream/internal/model"
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/gorilla/websocket"
+)
+
+const writeWait = 5 * time.Second
+
+type enqueueResult uint8
+
+const (
+	enqueueOK enqueueResult = iota
+	enqueueClosed
+	enqueueFull
 )
 
 type Client struct {
@@ -27,6 +37,7 @@ type Client struct {
 	sendClosed     bool
 	unregisterOnce sync.Once
 	closeOnce      sync.Once
+	closing        atomic.Bool
 }
 
 func NewClient(hub *Hub, conn *websocket.Conn, roomID uint64, userID uint64, userName string) *Client {
@@ -40,17 +51,17 @@ func NewClient(hub *Hub, conn *websocket.Conn, roomID uint64, userID uint64, use
 	}
 }
 
-func (c *Client) trySend(data []byte) bool {
+func (c *Client) trySend(data []byte) enqueueResult {
 	c.sendMu.RLock()
 	defer c.sendMu.RUnlock()
 	if c.sendClosed {
-		return false
+		return enqueueClosed
 	}
 	select {
 	case c.send <- data:
-		return true
+		return enqueueOK
 	default:
-		return false
+		return enqueueFull
 	}
 }
 
@@ -75,23 +86,27 @@ func (c *Client) signalUnregister() {
 
 func (c *Client) closeConnection() {
 	c.closeOnce.Do(func() {
-		_ = c.conn.Close()
+		c.closing.Store(true)
+		if c.conn != nil {
+			_ = c.conn.Close()
+		}
 	})
+}
+
+func (c *Client) isClosing() bool {
+	return c.closing.Load()
 }
 
 func (c *Client) readPump() {
 	defer func() {
-		c.signalUnregister()
 		c.closeConnection()
+		c.signalUnregister()
 	}()
 
 	for {
 		var msg Message
 		err := c.conn.ReadJSON(&msg)
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				fmt.Printf("read error: %v\n", err)
-			}
 			break
 		}
 
@@ -103,8 +118,7 @@ func (c *Client) readPump() {
 				"code": http.StatusUnauthorized,
 				"msg":  "登录后才能发送弹幕",
 			})
-			// 写入发送通道，不影响主循环
-			_ = c.trySend(errMsg)
+			c.hub.enqueueClient(c, errMsg)
 			continue
 		}
 
@@ -127,18 +141,23 @@ func (c *Client) readPump() {
 
 func (c *Client) writePump() {
 	defer func() {
-		c.signalUnregister()
 		c.closeConnection()
+		c.signalUnregister()
 	}()
 	for {
 		msg, ok := <-c.send
 		if !ok {
 			break
 		}
-		err := c.conn.WriteMessage(websocket.TextMessage, msg)
-		if err != nil {
-			if !errors.Is(err, websocket.ErrCloseSent) {
-				fmt.Printf("write error: %v\n", err)
+		if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+			if !c.isClosing() {
+				c.hub.metrics.writeErrorsTotal.Add(1)
+			}
+			break
+		}
+		if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			if !c.isClosing() {
+				c.hub.metrics.writeErrorsTotal.Add(1)
 			}
 			break
 		}

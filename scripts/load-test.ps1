@@ -13,6 +13,9 @@ param(
     [ValidateRange(-1, 1000000)]
     [int]$ActiveClients = -1,
 
+    [ValidateRange(0.0, 100.0)]
+    [double]$MaxLossPercent = 0.0,
+
     [string]$SendInterval = "2s",
     [string]$RampInterval = "10ms",
     [string]$Warmup = "2s",
@@ -248,7 +251,13 @@ function Invoke-Benchmark {
 
     $sent = [int64]$metricsMatch.Groups["sent"].Value
     $received = [int64]$metricsMatch.Groups["received"].Value
+    $expected = [int64]$metricsMatch.Groups["expected"].Value
     $errors = [int64]$metricsMatch.Groups["errors"].Value
+	$missing = [Math]::Max([int64]0, $expected - $received)
+	$lossPercent = 0.0
+	if ($expected -gt 0) {
+		$lossPercent = $missing * 100.0 / $expected
+	}
     $peakConnections = [int64]$connectionMatch.Groups["peak"].Value
     $dialAttempted = [int64]$connectionMatch.Groups["attempted"].Value
     $dialSucceeded = [int64]$connectionMatch.Groups["succeeded"].Value
@@ -266,10 +275,21 @@ function Invoke-Benchmark {
     if ($sendingEnabled -and $received -eq 0) {
         throw "Benchmark sent messages but received no broadcasts"
     }
+	if ($sendingEnabled -and $received -gt $expected) {
+		throw "Duplicate deliveries detected: received=$received expected=$expected"
+	}
+	if ($sendingEnabled -and $lossPercent -gt $MaxLossPercent) {
+		$lossText = $lossPercent.ToString("0.######", [System.Globalization.CultureInfo]::InvariantCulture)
+		$limitText = $MaxLossPercent.ToString("0.######", [System.Globalization.CultureInfo]::InvariantCulture)
+		throw "Delivery loss exceeded limit: missing=$missing loss=$lossText% limit=$limitText%"
+	}
 
     return [pscustomobject]@{
         Sent            = $sent
         Received        = $received
+		Expected        = $expected
+		Missing         = $missing
+		LossPercent     = $lossPercent
         Errors          = $errors
         PeakConnections = $peakConnections
         DialAttempted   = $dialAttempted
@@ -445,4 +465,7 @@ Write-Host "Peak connections: $($benchmarkResult.PeakConnections)"
 Write-Host "Dial succeeded: $($benchmarkResult.DialSucceeded)/$($benchmarkResult.DialAttempted)"
 Write-Host "Sent: $($benchmarkResult.Sent)"
 Write-Host "Received: $($benchmarkResult.Received)"
+Write-Host "Expected deliveries: $($benchmarkResult.Expected)"
+Write-Host "Missing deliveries: $($benchmarkResult.Missing)"
+Write-Host "Loss: $($benchmarkResult.LossPercent.ToString('0.######', [System.Globalization.CultureInfo]::InvariantCulture))%"
 Write-Host "History matches: $historyCount"

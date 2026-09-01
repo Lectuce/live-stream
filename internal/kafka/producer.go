@@ -37,7 +37,7 @@ func InitKafkaProducer() error {
 	writer = &kafka.Writer{
 		Addr:         kafka.TCP(brokers...),
 		Topic:        topic,
-		Balancer:     &kafka.LeastBytes{},
+		Balancer:     &kafka.Hash{},
 		Async:        true,
 		RequiredAcks: kafka.RequireAll,
 	}

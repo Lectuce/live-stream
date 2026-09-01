@@ -26,6 +26,8 @@ go run ./cmd/benchmark -c 60000 -r 1s -room 1 -origin http://localhost:5173 -sid
 - `-ramp`：建立相邻连接的间隔，默认 1 毫秒。
 - `-d`：持续时间，默认 0，表示运行到 Ctrl+C。
 
+每条压测弹幕都会带上发送时间。周期和最终输出提供固定桶估算的 `latency_p50`、`latency_p95`、`latency_p99`，以及参与延迟统计的 `latency_samples`；统计过程不会保存逐条延迟样本。
+
 通过 SSH 隧道测试远端服务时，仍可以使用默认 `ws://localhost:9000`，例如：
 
 ```powershell

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,6 +41,57 @@ type metrics struct {
 	expected      atomic.Int64
 	frames        atomic.Int64
 	errors        atomic.Int64
+	latency       latencyHistogram
+}
+
+var latencyBucketUpperBounds = [...]time.Duration{
+	time.Millisecond,
+	5 * time.Millisecond,
+	10 * time.Millisecond,
+	25 * time.Millisecond,
+	50 * time.Millisecond,
+	100 * time.Millisecond,
+	250 * time.Millisecond,
+	500 * time.Millisecond,
+	time.Second,
+	2 * time.Second,
+	5 * time.Second,
+	10 * time.Second,
+}
+
+type latencyHistogram struct {
+	count   atomic.Uint64
+	buckets [len(latencyBucketUpperBounds) + 1]atomic.Uint64
+}
+
+func (h *latencyHistogram) observe(latency time.Duration) {
+	if latency < 0 {
+		return
+	}
+	h.count.Add(1)
+	for i, upperBound := range latencyBucketUpperBounds {
+		if latency <= upperBound {
+			h.buckets[i].Add(1)
+			return
+		}
+	}
+	h.buckets[len(h.buckets)-1].Add(1)
+}
+
+func (h *latencyHistogram) percentile(percentile float64) time.Duration {
+	count := h.count.Load()
+	if count == 0 {
+		return 0
+	}
+	target := uint64(math.Ceil(float64(count) * percentile))
+	var cumulative uint64
+	for i, upperBound := range latencyBucketUpperBounds {
+		cumulative += h.buckets[i].Load()
+		if cumulative >= target {
+			return upperBound
+		}
+	}
+	return latencyBucketUpperBounds[len(latencyBucketUpperBounds)-1]
 }
 
 type incomingMessage struct {
@@ -349,7 +401,7 @@ func runClient(
 			sequence++
 			message := outgoingMessage{
 				Type:    "danma",
-				Content: fmt.Sprintf("bench-%d-%d", clientID, sequence),
+				Content: fmt.Sprintf("bench-%d-%d-%d", clientID, sequence, time.Now().UnixNano()),
 			}
 			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			if err := conn.WriteJSON(message); err != nil {
@@ -408,8 +460,26 @@ func readMessages(ctx context.Context, conn *websocket.Conn, stats *metrics, don
 		// so content is also accepted as the signal for a received danmaku.
 		if message.Type == "danma" || message.Content != "" {
 			stats.received.Add(1)
+			if sentAt, ok := benchmarkSentAt(message.Content); ok {
+				stats.latency.observe(time.Since(sentAt))
+			}
 		}
 	}
+}
+
+func benchmarkSentAt(content string) (time.Time, bool) {
+	if !strings.HasPrefix(content, "bench-") || strings.Count(content, "-") != 3 {
+		return time.Time{}, false
+	}
+	separator := strings.LastIndexByte(content, '-')
+	if separator < len("bench-") || separator == len(content)-1 {
+		return time.Time{}, false
+	}
+	nanoseconds, err := strconv.ParseInt(content[separator+1:], 10, 64)
+	if err != nil || nanoseconds <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(0, nanoseconds), true
 }
 
 func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval time.Duration) {
@@ -432,7 +502,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 				loss = float64(lag) / float64(expected) * 100
 			}
 			log.Printf(
-				"[STATS] elapsed=%s conns=%d peak=%d dials=%d/%d sent/s=%d recv/s=%d frames=%d lag=%d loss=%.2f%% errors=%d",
+				"[STATS] elapsed=%s conns=%d peak=%d dials=%d/%d sent/s=%d recv/s=%d frames=%d lag=%d loss=%.2f%% errors=%d latency_p50=%s latency_p95=%s latency_p99=%s",
 				time.Since(startedAt).Round(time.Second),
 				stats.connected.Load(),
 				stats.peakConnected.Load(),
@@ -444,6 +514,9 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 				lag,
 				loss,
 				stats.errors.Load(),
+				stats.latency.percentile(0.50),
+				stats.latency.percentile(0.95),
+				stats.latency.percentile(0.99),
 			)
 			lastSent = sent
 			lastReceived = received
@@ -454,7 +527,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 func printFinal(stats *metrics, startedAt time.Time) {
 	duration := time.Since(startedAt)
 	log.Printf(
-		"[FINAL] duration=%s conns=%d sent=%d received=%d frames=%d expected=%d errors=%d peak_conns=%d dial_attempted=%d dial_succeeded=%d dial_failed=%d",
+		"[FINAL] duration=%s conns=%d sent=%d received=%d frames=%d expected=%d errors=%d peak_conns=%d dial_attempted=%d dial_succeeded=%d dial_failed=%d latency_samples=%d latency_p50=%s latency_p95=%s latency_p99=%s",
 		duration.Round(time.Millisecond),
 		stats.connected.Load(),
 		stats.sent.Load(),
@@ -466,5 +539,9 @@ func printFinal(stats *metrics, startedAt time.Time) {
 		stats.dialAttempted.Load(),
 		stats.dialSucceeded.Load(),
 		stats.dialFailed.Load(),
+		stats.latency.count.Load(),
+		stats.latency.percentile(0.50),
+		stats.latency.percentile(0.95),
+		stats.latency.percentile(0.99),
 	)
 }
