@@ -488,6 +488,20 @@ git diff --check
 
 异步提交可能在进程异常退出时重复处理最近一个提交周期内的消息，但不会造成已发布消息丢失；客户端继续按 `message_id` 去重。
 
+### 15.8 修正 Producer 固定批次等待
+
+部署 15.7 后，100 连接、1 个发送者仍然稳定表现为 `P50<=2s`、`P95<=5s`，说明只调整 Consumer 的判断不成立。继续检查 kafka-go 源码后确认：业务 Producer 未配置 `BatchTimeout`，默认值为 1 秒、默认 `BatchSize` 为 100。低流量下一条消息不足以填满 batch，每次同步 `WriteMessages` 会等待定时刷新，这是端到端延迟的主要固定来源。
+
+本轮修正：
+
+- Producer 显式设置 `BatchTimeout=5ms`、`BatchSize=100`；
+- 保留 `Async=false` 和 `RequireAll`，发送者仍在 Kafka 确认后收到 `accepted`；
+- 低流量最多等待约 5ms，高流量仍可以在 5ms 窗口内合批；
+- `/debug/kafka/realtime` 增加 `kafka_producer_write_duration`；
+- 增加单元测试，防止以后删除配置后悄悄退回 kafka-go 的 1 秒默认值。
+
+15.7 的 Consumer 低等待和异步 offset 提交继续保留，但它们不是本次秒级延迟的主要修复。
+
 ## 14. PreparedMessage 与可靠投递闭环
 
 ### 14.1 PreparedMessage 生产接入

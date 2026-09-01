@@ -60,6 +60,7 @@ type realtimeDurationSnapshot struct {
 
 type realtimeKafkaMetrics struct {
 	messageAge       realtimeDurationHistogram
+	producerWrite    realtimeDurationHistogram
 	redisPublish     realtimeDurationHistogram
 	commitEnqueue    realtimeDurationHistogram
 	fetchedTotal     atomic.Uint64
@@ -74,6 +75,7 @@ type RealtimeMetricsSnapshot struct {
 	PublishedTotal   uint64                   `json:"kafka_realtime_published_total"`
 	CommitBatchTotal uint64                   `json:"kafka_realtime_commit_batch_total"`
 	MessageAge       realtimeDurationSnapshot `json:"kafka_realtime_message_age"`
+	ProducerWrite    realtimeDurationSnapshot `json:"kafka_producer_write_duration"`
 	RedisPublish     realtimeDurationSnapshot `json:"kafka_realtime_redis_publish_duration"`
 	CommitEnqueue    realtimeDurationSnapshot `json:"kafka_realtime_commit_enqueue_duration"`
 }
@@ -84,6 +86,7 @@ func RealtimeMetrics() RealtimeMetricsSnapshot {
 		PublishedTotal:   realtimeMetrics.publishedTotal.Load(),
 		CommitBatchTotal: realtimeMetrics.commitBatchTotal.Load(),
 		MessageAge:       snapshotRealtimeDuration(&realtimeMetrics.messageAge),
+		ProducerWrite:    snapshotRealtimeDuration(&realtimeMetrics.producerWrite),
 		RedisPublish:     snapshotRealtimeDuration(&realtimeMetrics.redisPublish),
 		CommitEnqueue:    snapshotRealtimeDuration(&realtimeMetrics.commitEnqueue),
 	}

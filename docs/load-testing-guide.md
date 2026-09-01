@@ -843,6 +843,7 @@ Set-Location D:\GoProjects\live-stream
 - `ws_control_queue_full_total`：高优先级控制队列也无法写入的次数。
 - `ws_realtime_message_age`：消息到达 Redis Subscriber 时距离 Kafka 消息时间戳的时间；
 - `/debug/kafka/realtime` 中的 `kafka_realtime_message_age`：realtime Consumer Fetch 时的消息年龄；
+- `kafka_producer_write_duration`：WebSocket 收到弹幕后，Kafka RequireAll 写入完成所需时间；低流量时若接近 1 秒，应检查 Producer `BatchTimeout`；
 - `kafka_realtime_redis_publish_duration`：Redis Publish 调用耗时；
 - `kafka_realtime_commit_enqueue_duration`：offset 交给异步提交循环的耗时。
 

@@ -14,6 +14,11 @@ import (
 
 var writer *kafka.Writer
 
+const (
+	producerBatchSize    = 100
+	producerBatchTimeout = 5 * time.Millisecond
+)
+
 func InitKafkaProducer() error {
 	brokers := config.GlobalConfig.Kafka.Brokers
 	topic := config.GlobalConfig.Kafka.DanmuTopic
@@ -34,15 +39,21 @@ func InitKafkaProducer() error {
 		return fmt.Errorf("close kafka probe connection: %w", err)
 	}
 
-	writer = &kafka.Writer{
+	writer = newWriter(brokers, topic)
+	fmt.Printf("kafka writer init success, broker=%s, topic=%s, batch_timeout=%s\n", brokers[0], topic, producerBatchTimeout)
+	return nil
+}
+
+func newWriter(brokers []string, topic string) *kafka.Writer {
+	return &kafka.Writer{
 		Addr:         kafka.TCP(brokers...),
 		Topic:        topic,
 		Balancer:     &kafka.Hash{},
+		BatchSize:    producerBatchSize,
+		BatchTimeout: producerBatchTimeout,
 		Async:        false,
 		RequiredAcks: kafka.RequireAll,
 	}
-	fmt.Printf("kafka writer init success, broker=%s, topic=%s\n", brokers[0], topic)
-	return nil
 }
 
 func SendMsg(ctx context.Context, key []byte, data any) error {
@@ -53,7 +64,7 @@ func SendMsg(ctx context.Context, key []byte, data any) error {
 	if err != nil {
 		return fmt.Errorf("json marshal err: %v", err)
 	}
-	err = writer.WriteMessages(ctx,
+	err = writeMessage(ctx,
 		kafka.Message{
 			Key:   key,
 			Value: bytes,
@@ -75,12 +86,19 @@ func SendDanmaMsg(ctx context.Context, msg model.Message) error {
 		return fmt.Errorf("json marshal err: %v", err)
 	}
 	key := fmt.Appendf(nil, "%d", msg.RoomID)
-	return writer.WriteMessages(ctx,
+	return writeMessage(ctx,
 		kafka.Message{
 			Key:   key,
 			Value: bytes,
 		},
 	)
+}
+
+func writeMessage(ctx context.Context, message kafka.Message) error {
+	startedAt := time.Now()
+	err := writer.WriteMessages(ctx, message)
+	realtimeMetrics.producerWrite.observe(time.Since(startedAt))
+	return err
 }
 
 func Close() {
