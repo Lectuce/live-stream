@@ -411,3 +411,25 @@ go build -o live-stream .
 ```
 
 服务器必须重新构建并启动新二进制后，本轮并发修改才会在远程压测中生效。
+
+## 12. Kafka Consumer 定时刷新和诊断改进
+
+文件：`internal/kafka/consumer.go`
+
+旧实现在 `select` 的 `default` 分支中直接调用阻塞的 `FetchMessage`。当 Kafka 暂时没有新消息时，主循环无法响应 200ms ticker，尾部不满 100 条的批次会长时间滞留。
+
+现在改为：
+
+- 独立 goroutine 阻塞调用 `FetchMessage`，并把结果交给主循环；
+- 主循环可以正常响应 200ms ticker，定时处理未满批次；
+- 优雅退出前使用最多 10 秒的独立 Context 刷新剩余消息；
+- `MinBytes` 从 10KB 改为 1，避免低流量弹幕因等待凑满请求大小而增加延迟；
+- 明确配置 `MaxWait=1s` 和 `ReadBatchTimeout=5s`；
+- 接入 kafka-go 的 `ErrorLogger`，使连接 Broker、寻找 Coordinator 和加入 Consumer Group 的内部错误能在后端日志中直接看到。
+- 提交批次时把所有 Kafka 消息传给 `CommitMessages`，由 kafka-go 分别提交每个分区的最高 offset，不再只提交批次最后一条所在的分区。
+
+消费组 `live-danmu-consumer` 不需要手动创建；新二进制成功连接 Kafka 并加入后，Kafka 会自动创建并显示该组。
+
+文件：`internal/kafka/producer.go`、`main.go`
+
+Producer 初始化不再只创建异步 Writer 就打印成功。启动时会在 10 秒超时内实际连接 `danmu_topic` 的 partition 0 leader；Broker、advertised listener 或 topic 不可达时返回明确错误。`main.go` 现在检查该错误并停止启动，避免出现 HTTP 服务正常、Kafka 实际不可用的假健康状态。

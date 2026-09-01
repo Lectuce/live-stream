@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"live-stream/internal/config"
 	"live-stream/internal/dao"
@@ -14,15 +15,20 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-func commitWithRetry(ctx context.Context, reader *kafka.Reader, msg kafka.Message) error {
+func commitWithRetry(ctx context.Context, reader *kafka.Reader, msgs ...kafka.Message) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+	lastMsg := msgs[len(msgs)-1]
 	maxRetry := 5
 	for i := 0; i < maxRetry; i++ {
-		err := reader.CommitMessages(ctx, msg)
+		err := reader.CommitMessages(ctx, msgs...)
 		if err == nil {
 			log.Printf(
-				"commit kafka message success, partition=%d offset=%d",
-				msg.Partition,
-				msg.Offset,
+				"commit kafka messages success, count=%d, last_partition=%d, last_offset=%d",
+				len(msgs),
+				lastMsg.Partition,
+				lastMsg.Offset,
 			)
 			return nil
 		}
@@ -31,9 +37,10 @@ func commitWithRetry(ctx context.Context, reader *kafka.Reader, msg kafka.Messag
 		}
 
 		log.Printf(
-			"commit kafka message failed, partition=%d offset=%d: %v",
-			msg.Partition,
-			msg.Offset,
+			"commit kafka messages failed, count=%d, last_partition=%d, last_offset=%d: %v",
+			len(msgs),
+			lastMsg.Partition,
+			lastMsg.Offset,
 			err,
 		)
 
@@ -44,17 +51,21 @@ func commitWithRetry(ctx context.Context, reader *kafka.Reader, msg kafka.Messag
 		}
 
 	}
-	return fmt.Errorf("commit failed after %d retries, partition=%d offset=%d", maxRetry, msg.Partition, msg.Offset)
+	return fmt.Errorf("commit failed after %d retries, count=%d", maxRetry, len(msgs))
 }
 
 func StartKafkaConsumer(ctx context.Context) error {
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  config.GlobalConfig.Kafka.Brokers,
-		GroupID:  config.GlobalConfig.Kafka.GroupID,
-		Topic:    config.GlobalConfig.Kafka.DanmuTopic,
-		MinBytes: 10e3,
-		MaxBytes: 10e6,
-		MaxWait:  100 * time.Millisecond,
+		Brokers:          config.GlobalConfig.Kafka.Brokers,
+		GroupID:          config.GlobalConfig.Kafka.GroupID,
+		Topic:            config.GlobalConfig.Kafka.DanmuTopic,
+		MinBytes:         1,
+		MaxBytes:         10e6,
+		MaxWait:          time.Second,
+		ReadBatchTimeout: 5 * time.Second,
+		ErrorLogger: kafka.LoggerFunc(func(format string, args ...any) {
+			log.Printf("kafka reader: "+format, args...)
+		}),
 	})
 	defer func() {
 		err := reader.Close()
@@ -75,31 +86,65 @@ func StartKafkaConsumer(ctx context.Context) error {
 		ticker  = time.NewTicker(maxWait)
 	)
 	defer ticker.Stop()
+
+	type fetchResult struct {
+		msg kafka.Message
+		err error
+	}
+	fetched := make(chan fetchResult)
+	go func() {
+		defer close(fetched)
+		for {
+			msg, err := reader.FetchMessage(ctx)
+			select {
+			case fetched <- fetchResult{msg: msg, err: err}:
+			case <-ctx.Done():
+				return
+			}
+			if err != nil && ctx.Err() != nil {
+				return
+			}
+		}
+	}()
+
+	flush := func(processCtx context.Context) {
+		if len(msgs) == 0 {
+			return
+		}
+		processBatch(processCtx, reader, batch, rawMsgs, msgs, maxRetry)
+		batch = batch[:0]
+		msgs = msgs[:0]
+		rawMsgs = rawMsgs[:0]
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
+			flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			flush(flushCtx)
+			cancel()
 			return nil
 		case <-ticker.C:
-			if len(msgs) > 0 {
-				processBatch(ctx, reader, batch, rawMsgs, msgs, maxRetry)
-				batch = batch[:0]
-				msgs = msgs[:0]
-				rawMsgs = rawMsgs[:0]
+			flush(ctx)
+		case result, ok := <-fetched:
+			if !ok {
+				return nil
 			}
-		default:
-			msg, err := reader.FetchMessage(ctx)
-			if err != nil {
+			if result.err != nil {
 				// 上下文取消，退出
 				if ctx.Err() != nil {
 					log.Println("kafka consumer context canceled, exiting")
 					return nil
 				}
-				log.Printf("read kafka message err: %v\n", err)
+				if !errors.Is(result.err, context.Canceled) && !errors.Is(result.err, context.DeadlineExceeded) {
+					log.Printf("read kafka message err: %v\n", result.err)
+				}
 				continue
 			}
+			msg := result.msg
 			// 反序列化成业务消息
 			var danmaMsg model.Message
-			err = json.Unmarshal(msg.Value, &danmaMsg)
+			err := json.Unmarshal(msg.Value, &danmaMsg)
 			if err != nil {
 				log.Printf(
 					"invalid kafka message, topic=%s partition=%d offset=%d: %v",
@@ -126,13 +171,9 @@ func StartKafkaConsumer(ctx context.Context) error {
 			rawMsgs = append(rawMsgs, danmaMsg)
 			msgs = append(msgs, msg)
 			if len(rawMsgs) >= batchSize {
-				processBatch(ctx, reader, batch, rawMsgs, msgs, maxRetry)
-				batch = batch[:0]
-				msgs = msgs[:0]
-				rawMsgs = rawMsgs[:0]
+				flush(ctx)
 				ticker.Reset(maxWait)
 			}
-
 		}
 	}
 }
@@ -189,9 +230,8 @@ func processBatch(ctx context.Context, reader *kafka.Reader, batch []model.Danma
 		_ = dao.Publish(ctx, dao.DanmuChannel, string(payload))
 	}
 
-	// 批量提交 offset（提交最后一条）
+	// 批量提交 offset；kafka-go 会为每个分区提交批次中的最高 offset。
 	if len(msgs) > 0 {
-		lastMsg := msgs[len(msgs)-1]
-		_ = commitWithRetry(ctx, reader, lastMsg)
+		_ = commitWithRetry(ctx, reader, msgs...)
 	}
 }

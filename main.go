@@ -22,7 +22,9 @@ func main() {
 	go hub.Run()
 	dao.Initdb()
 	dao.InitRedis()
-	kafka.InitKafkaProducer()
+	if err := kafka.InitKafkaProducer(); err != nil {
+		log.Fatalf("kafka producer init failed: %v", err)
+	}
 
 	defer kafka.Close()
 	ctx, cancel := context.WithCancel(context.Background())
