@@ -34,7 +34,6 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 			})
 		}
 
-
 		rooms := apiV1Group.Group("/rooms")
 		{
 			rooms.GET("", func(c *gin.Context) {
@@ -42,10 +41,13 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 			})
 			rooms.GET("/:room_id", func(c *gin.Context) {
 				handler.GetRoomDetail(c)
-			})			
+			})
 			// 弹幕历史
 			rooms.GET("/:room_id/messages", func(c *gin.Context) {
 				handler.GetDanmaHistory(c)
+			})
+			rooms.GET("/:room_id/messages/replay", func(c *gin.Context) {
+				handler.ReplayDanmaHistory(c)
 			})
 			rooms.Use(middleware.Auth)
 			{
@@ -65,7 +67,5 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 		}
 
 	}
-
-
 
 }

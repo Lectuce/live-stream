@@ -7,6 +7,7 @@ import (
 	"live-stream/internal/dao"
 	"live-stream/internal/kafka"
 	"live-stream/internal/rousters"
+	"live-stream/internal/service"
 	"live-stream/internal/ws"
 	"log"
 	"net/http"
@@ -45,6 +46,7 @@ func main() {
 			log.Printf("kafka consumer exit: %v", err)
 		}
 	}()
+	go service.StartDanmaOutboxDispatcher(ctx)
 
 	r := gin.Default()
 

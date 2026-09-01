@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type Room struct {
@@ -247,20 +249,39 @@ func (h *Hub) broadcastToRoom(msg *Message) {
 		log.Printf("marshal websocket broadcast failed: %v", err)
 		return
 	}
+	frame, err := websocket.NewPreparedMessage(websocket.TextMessage, data)
+	if err != nil {
+		log.Printf("prepare websocket broadcast failed: %v", err)
+		return
+	}
 	for _, cli := range clients {
-		h.enqueueClient(cli, data)
+		h.enqueueClient(cli, frame)
 	}
 }
 
-func (h *Hub) enqueueClient(client *Client, data []byte) {
-	switch client.trySend(data) {
+func (h *Hub) enqueueJSON(client *Client, value any) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		log.Printf("marshal websocket response failed: %v", err)
+		return
+	}
+	frame, err := websocket.NewPreparedMessage(websocket.TextMessage, data)
+	if err != nil {
+		log.Printf("prepare websocket response failed: %v", err)
+		return
+	}
+	h.enqueueClient(client, frame)
+}
+
+func (h *Hub) enqueueClient(client *Client, message *websocket.PreparedMessage) {
+	switch client.trySend(message) {
 	case enqueueOK:
 		h.metrics.deliveryEnqueuedTotal.Add(1)
 	case enqueueClosed:
 		// The unregister path already owns cleanup for a closed queue.
 	case enqueueFull:
 		h.metrics.queueFullTotal.Add(1)
-		client.closeConnection()
+		client.closeConnectionWithReason(4001, "resync_required")
 		client.signalUnregister()
 	}
 }

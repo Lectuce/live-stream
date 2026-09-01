@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -41,6 +42,7 @@ type metrics struct {
 	expected      atomic.Int64
 	frames        atomic.Int64
 	errors        atomic.Int64
+	ackSent       atomic.Int64
 	latency       latencyHistogram
 }
 
@@ -97,11 +99,15 @@ func (h *latencyHistogram) percentile(percentile float64) time.Duration {
 type incomingMessage struct {
 	Type    string `json:"type"`
 	Content string `json:"content"`
+	RoomSeq uint64 `json:"room_seq"`
 }
 
 type outgoingMessage struct {
-	Type    string `json:"type"`
-	Content string `json:"content"`
+	Type      string `json:"type"`
+	MessageID string `json:"message_id,omitempty"`
+	RoomID    uint64 `json:"room_id,omitempty"`
+	AckSeq    uint64 `json:"ack_seq,omitempty"`
+	Content   string `json:"content,omitempty"`
 }
 
 func main() {
@@ -118,6 +124,7 @@ func main() {
 	duration := flag.Duration("d", 0, "message-sending duration; 0 runs until Ctrl+C")
 	drain := flag.Duration("drain", 3*time.Second, "time to keep connections open after sending stops")
 	reportInterval := flag.Duration("report", defaultReportInterval, "metrics reporting interval")
+	ackEvery := flag.Int("ack-every", 0, "send a cumulative ACK after this many danmaku deliveries per client; 0 disables ACK")
 	flag.Parse()
 
 	if *clients <= 0 {
@@ -143,6 +150,9 @@ func main() {
 	}
 	if *reportInterval <= 0 {
 		log.Fatal("-report must be greater than 0")
+	}
+	if *ackEvery < 0 {
+		log.Fatal("-ack-every cannot be negative")
 	}
 
 	targets := splitTargets(*urlsFlag)
@@ -171,7 +181,7 @@ func main() {
 	go monitor(clientCtx, &stats, startedAt, *reportInterval)
 
 	log.Printf(
-		"[BENCHMARK] starting clients=%d room=%d active_clients=%d send_interval=%s ramp=%s warmup=%s send_duration=%s drain=%s targets=%v",
+		"[BENCHMARK] starting clients=%d room=%d active_clients=%d send_interval=%s ramp=%s warmup=%s send_duration=%s drain=%s ack_every=%d targets=%v",
 		*clients,
 		*roomID,
 		activeClientCount,
@@ -180,6 +190,7 @@ func main() {
 		*warmup,
 		*duration,
 		*drain,
+		*ackEvery,
 		targets,
 	)
 
@@ -218,6 +229,7 @@ launchLoop:
 				clientID,
 				isActiveClient(clientID, *clients, activeClientCount),
 				*sendInterval,
+				*ackEvery,
 				startSending,
 				stopSending,
 				&dialWG,
@@ -320,6 +332,7 @@ func runClient(
 	clientID int,
 	isTalker bool,
 	sendInterval time.Duration,
+	ackEvery int,
 	startSending <-chan struct{},
 	stopSending <-chan struct{},
 	dialWG *sync.WaitGroup,
@@ -357,13 +370,14 @@ func runClient(
 		stats.connected.Add(-1)
 	}()
 
+	var writeMu sync.Mutex
 	readDone := make(chan struct{})
-	go readMessages(ctx, conn, stats, readDone)
+	go readMessages(ctx, conn, stats, readDone, &writeMu, roomID, ackEvery)
 
 	if !isTalker {
 		select {
 		case <-ctx.Done():
-			_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "benchmark stopped"), time.Now().Add(time.Second))
+			writeCloseControl(conn, &writeMu)
 		case <-readDone:
 		}
 		return
@@ -385,7 +399,7 @@ func runClient(
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "benchmark stopped"), time.Now().Add(time.Second))
+			writeCloseControl(conn, &writeMu)
 			return
 		case <-readDone:
 			timer.Stop()
@@ -400,11 +414,11 @@ func runClient(
 		case <-timer.C:
 			sequence++
 			message := outgoingMessage{
-				Type:    "danma",
-				Content: fmt.Sprintf("bench-%d-%d-%d", clientID, sequence, time.Now().UnixNano()),
+				Type:      "danma",
+				MessageID: uuid.NewString(),
+				Content:   fmt.Sprintf("bench-%d-%d-%d", clientID, sequence, time.Now().UnixNano()),
 			}
-			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := conn.WriteJSON(message); err != nil {
+			if err := writeJSON(conn, &writeMu, message); err != nil {
 				stats.errors.Add(1)
 				return
 			}
@@ -412,6 +426,25 @@ func runClient(
 			stats.expected.Add(stats.connected.Load())
 		}
 	}
+}
+
+func writeJSON(conn *websocket.Conn, mu *sync.Mutex, value any) error {
+	mu.Lock()
+	defer mu.Unlock()
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
+	return conn.WriteJSON(value)
+}
+
+func writeCloseControl(conn *websocket.Conn, mu *sync.Mutex) {
+	mu.Lock()
+	defer mu.Unlock()
+	_ = conn.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "benchmark stopped"),
+		time.Now().Add(time.Second),
+	)
 }
 
 func recordDialFailure(stats *metrics, clientID int, response *http.Response, err error) {
@@ -439,8 +472,19 @@ func updatePeak(peak *atomic.Int64, current int64) {
 	}
 }
 
-func readMessages(ctx context.Context, conn *websocket.Conn, stats *metrics, done chan<- struct{}) {
+func readMessages(
+	ctx context.Context,
+	conn *websocket.Conn,
+	stats *metrics,
+	done chan<- struct{},
+	writeMu *sync.Mutex,
+	roomID uint64,
+	ackEvery int,
+) {
 	defer close(done)
+	var lastContiguous uint64
+	pending := make(map[uint64]struct{})
+	deliveriesSinceAck := 0
 	for {
 		_, payload, err := conn.ReadMessage()
 		if err != nil {
@@ -462,6 +506,34 @@ func readMessages(ctx context.Context, conn *websocket.Conn, stats *metrics, don
 			stats.received.Add(1)
 			if sentAt, ok := benchmarkSentAt(message.Content); ok {
 				stats.latency.observe(time.Since(sentAt))
+			}
+			if message.RoomSeq > 0 {
+				if lastContiguous == 0 {
+					lastContiguous = message.RoomSeq
+				} else if message.RoomSeq == lastContiguous+1 {
+					lastContiguous++
+					for {
+						if _, ok := pending[lastContiguous+1]; !ok {
+							break
+						}
+						delete(pending, lastContiguous+1)
+						lastContiguous++
+					}
+				} else if message.RoomSeq > lastContiguous+1 {
+					pending[message.RoomSeq] = struct{}{}
+				}
+				deliveriesSinceAck++
+				if ackEvery > 0 && deliveriesSinceAck >= ackEvery {
+					ack := outgoingMessage{Type: "ack", RoomID: roomID, AckSeq: lastContiguous}
+					if err := writeJSON(conn, writeMu, ack); err != nil {
+						if ctx.Err() == nil {
+							stats.errors.Add(1)
+						}
+						return
+					}
+					stats.ackSent.Add(1)
+					deliveriesSinceAck = 0
+				}
 			}
 		}
 	}
@@ -488,6 +560,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 
 	var lastSent int64
 	var lastReceived int64
+	var lastAckSent int64
 	for {
 		select {
 		case <-ctx.Done():
@@ -495,6 +568,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 		case <-ticker.C:
 			sent := stats.sent.Load()
 			received := stats.received.Load()
+			ackSent := stats.ackSent.Load()
 			expected := stats.expected.Load()
 			lag := expected - received
 			loss := 0.0
@@ -502,7 +576,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 				loss = float64(lag) / float64(expected) * 100
 			}
 			log.Printf(
-				"[STATS] elapsed=%s conns=%d peak=%d dials=%d/%d sent/s=%d recv/s=%d frames=%d lag=%d loss=%.2f%% errors=%d latency_p50=%s latency_p95=%s latency_p99=%s",
+				"[STATS] elapsed=%s conns=%d peak=%d dials=%d/%d sent/s=%d recv/s=%d ack/s=%d frames=%d lag=%d loss=%.2f%% errors=%d latency_p50=%s latency_p95=%s latency_p99=%s",
 				time.Since(startedAt).Round(time.Second),
 				stats.connected.Load(),
 				stats.peakConnected.Load(),
@@ -510,6 +584,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 				stats.dialAttempted.Load(),
 				sent-lastSent,
 				received-lastReceived,
+				ackSent-lastAckSent,
 				stats.frames.Load(),
 				lag,
 				loss,
@@ -520,6 +595,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 			)
 			lastSent = sent
 			lastReceived = received
+			lastAckSent = ackSent
 		}
 	}
 }
@@ -527,7 +603,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 func printFinal(stats *metrics, startedAt time.Time) {
 	duration := time.Since(startedAt)
 	log.Printf(
-		"[FINAL] duration=%s conns=%d sent=%d received=%d frames=%d expected=%d errors=%d peak_conns=%d dial_attempted=%d dial_succeeded=%d dial_failed=%d latency_samples=%d latency_p50=%s latency_p95=%s latency_p99=%s",
+		"[FINAL] duration=%s conns=%d sent=%d received=%d frames=%d expected=%d errors=%d peak_conns=%d dial_attempted=%d dial_succeeded=%d dial_failed=%d ack_sent=%d latency_samples=%d latency_p50=%s latency_p95=%s latency_p99=%s",
 		duration.Round(time.Millisecond),
 		stats.connected.Load(),
 		stats.sent.Load(),
@@ -539,6 +615,7 @@ func printFinal(stats *metrics, startedAt time.Time) {
 		stats.dialAttempted.Load(),
 		stats.dialSucceeded.Load(),
 		stats.dialFailed.Load(),
+		stats.ackSent.Load(),
 		stats.latency.count.Load(),
 		stats.latency.percentile(0.50),
 		stats.latency.percentile(0.95),

@@ -102,13 +102,3 @@ func SelectMessageByCursor(ctx context.Context, roomID uint64, beforeID uint64, 
 	return danmas, nil
 }
 
-// BatchCreateDanma 批量插入弹幕，自动忽略重复（幂等）
-func BatchCreateDanma(ctx context.Context, batch []model.Danma) error {
-	if len(batch) == 0 {
-		return nil
-	}
-	// INSERT IGNORE：遇到唯一键冲突自动跳过
-	return dao.SC.Db.WithContext(ctx).
-		Set("gorm:insert_option", "IGNORE").
-		Create(&batch).Error
-}

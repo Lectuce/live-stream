@@ -54,6 +54,19 @@ func commitWithRetry(ctx context.Context, reader *kafka.Reader, msgs ...kafka.Me
 	return fmt.Errorf("commit failed after %d retries, count=%d", maxRetry, len(msgs))
 }
 
+func commitUntilSuccess(ctx context.Context, reader *kafka.Reader, msgs ...kafka.Message) error {
+	for {
+		if err := commitWithRetry(ctx, reader, msgs...); err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+}
+
 func StartKafkaConsumer(ctx context.Context) error {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:          config.GlobalConfig.Kafka.Brokers,
@@ -77,10 +90,8 @@ func StartKafkaConsumer(ctx context.Context) error {
 	const (
 		batchSize = 100
 		maxWait   = 200 * time.Millisecond
-		maxRetry  = 3
 	)
 	var (
-		batch   = make([]model.Danma, 0, batchSize)
 		rawMsgs = make([]model.Message, 0, batchSize)
 		msgs    = make([]kafka.Message, 0, batchSize)
 		ticker  = time.NewTicker(maxWait)
@@ -111,8 +122,7 @@ func StartKafkaConsumer(ctx context.Context) error {
 		if len(msgs) == 0 {
 			return
 		}
-		processBatch(processCtx, reader, batch, rawMsgs, msgs, maxRetry)
-		batch = batch[:0]
+		processBatch(processCtx, reader, rawMsgs, msgs)
 		msgs = msgs[:0]
 		rawMsgs = rawMsgs[:0]
 	}
@@ -153,21 +163,9 @@ func StartKafkaConsumer(ctx context.Context) error {
 					msg.Offset,
 					err,
 				)
-				_ = commitWithRetry(ctx, reader, msg)
+				_ = commitUntilSuccess(ctx, reader, msg)
 				continue
 			}
-			if danmaMsg.Type == model.MsgTypeDanma {
-				// 转换为数据库实体
-				dbDanma := model.Danma{
-					MessageID: danmaMsg.MessageID,
-					RoomID:    danmaMsg.RoomID,
-					UserID:    danmaMsg.UserID,
-					UserName:  danmaMsg.UserName,
-					Content:   danmaMsg.Content,
-				}
-				batch = append(batch, dbDanma)
-			}
-
 			rawMsgs = append(rawMsgs, danmaMsg)
 			msgs = append(msgs, msg)
 			if len(rawMsgs) >= batchSize {
@@ -178,42 +176,17 @@ func StartKafkaConsumer(ctx context.Context) error {
 	}
 }
 
-func processBatch(ctx context.Context, reader *kafka.Reader, batch []model.Danma, rawMsgs []model.Message, msgs []kafka.Message, maxRetry int) {
-
-	if len(batch) > 0 {
-		var insertErr error
-
-		for attempt := 0; attempt < maxRetry; attempt++ {
-			insertErr = repo.BatchCreateDanma(ctx, batch)
-
-			// 成功：立即结束重试，继续 Redis 发布和 offset 提交
-			if insertErr == nil {
-				break
-			}
-
-			log.Printf(
-				"batch insert failed, attempt=%d/%d, count=%d, err=%v",
-				attempt+1,
-				maxRetry,
-				len(batch),
-				insertErr,
-			)
-
-			// 最后一次仍失败：不能发布 Redis，也不能提交 offset
-			if attempt == maxRetry-1 {
-				log.Printf(
-					"batch insert finally failed, count=%d, err=%v",
-					len(batch),
-					insertErr,
-				)
-				return
-			}
-
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(time.Second):
-			}
+func processBatch(ctx context.Context, reader *kafka.Reader, rawMsgs []model.Message, msgs []kafka.Message) {
+	for attempt := 1; ; attempt++ {
+		if err := repo.PersistDanmaEvents(ctx, rawMsgs); err == nil {
+			break
+		} else {
+			log.Printf("persist danma transaction failed, attempt=%d, count=%d, err=%v", attempt, len(rawMsgs), err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
 		}
 	}
 
@@ -224,14 +197,9 @@ func processBatch(ctx context.Context, reader *kafka.Reader, batch []model.Danma
 		}
 	}
 
-	// 批量发布 Redis
-	for _, dm := range batch {
-		payload, _ := json.Marshal(dm)
-		_ = dao.Publish(ctx, dao.DanmuChannel, string(payload))
-	}
-
-	// 批量提交 offset；kafka-go 会为每个分区提交批次中的最高 offset。
+	// MySQL 中已经同时保存了 outbox，因此此处可以提交 offset。Redis
+	// 发布由独立 dispatcher 重试，避免数据库成功但发布前崩溃造成丢失。
 	if len(msgs) > 0 {
-		_ = commitWithRetry(ctx, reader, msgs...)
+		_ = commitUntilSuccess(ctx, reader, msgs...)
 	}
 }

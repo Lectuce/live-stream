@@ -30,8 +30,35 @@ func GetDanmaHistory(ctx context.Context, roomID uint64, cursor uint64, limit in
 		nextCursor = danmas[len(danmas)-1].ID
 	}
 	return &model.MessageCursorDTO{
-		Items:       danmas,
+		Items:      danmas,
 		NextCursor: nextCursor,
 		HasMore:    hasMore,
+	}, nil
+}
+
+func ReplayDanmaHistory(ctx context.Context, roomID, afterSeq uint64, limit int) (*model.MessageReplayDTO, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	messages, err := repo.SelectMessagesAfterSeq(ctx, roomID, afterSeq, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	hasMore := len(messages) > limit
+	if hasMore {
+		messages = messages[:limit]
+	}
+	nextSeq := afterSeq
+	if len(messages) > 0 {
+		nextSeq = messages[len(messages)-1].RoomSeq
+	}
+	return &model.MessageReplayDTO{
+		Items:   messages,
+		NextSeq: nextSeq,
+		HasMore: hasMore,
 	}, nil
 }

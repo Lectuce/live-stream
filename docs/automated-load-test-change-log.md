@@ -391,6 +391,45 @@ IPv6 地址在 HTTP/WebSocket URL 中仍使用方括号；脚本执行 TCP 连�
 | `docs/load-testing-guide.md` | 新参数说明、IPv4/IPv6 直连命令和 SSH 使用边界 |
 | `docs/automated-load-test-change-log.md` | 本节修改记录 |
 
+## 14. PreparedMessage 与可靠投递闭环
+
+### 14.1 PreparedMessage 生产接入
+
+根据后续改造要求，WebSocket Client 的发送队列已从 `chan []byte` 改为 `chan *websocket.PreparedMessage`。同一条房间广播只进行一次 JSON 编码和一次 PreparedMessage 构造，所有目标连接共享该只读帧，并通过 `WritePreparedMessage` 写出。
+
+当前短基准中 PreparedMessage 的耗时约为 207.6 μs/op，普通 WriteMessage 约为 212.6 μs/op，但 PreparedMessage 分配量仍更高。历史长基准曾出现 PreparedMessage 略慢的结果，因此该优化最终是否保留，需要以 Linux 服务端 10,000 连接全链路 profile 和压测结果决定，不能仅凭微基准下结论。
+
+### 14.2 房间序号和恢复接口
+
+- `danmas` 增加房间内递增的 `room_seq`；
+- 启动迁移按原 `id` 顺序回填旧数据；
+- 新增 `(room_id, room_seq)` 唯一索引；
+- 新增 `GET /api/v1/rooms/:room_id/messages/replay?after_seq=N&limit=100`；
+- 恢复接口按 `room_seq ASC` 返回，供断线和缺口补拉。
+
+### 14.3 ACK 和发送幂等
+
+- 客户端可以发送 `{type:"ack", room_id, ack_seq}` 累计 ACK；
+- ACK 不进入 Kafka，连接内只允许确认位置向前推进；
+- 服务端指标增加 `ws_ack_total`；
+- 压测器增加 `-ack-every`，可以模拟累计 ACK 负载；
+- 发送端可提供 UUID `message_id`，超时重试时复用；
+- Kafka 同步确认后返回 `accepted`；无效 UUID 返回 400 类型的 WebSocket 错误消息。
+
+### 14.4 Transactional Outbox
+
+Kafka Consumer 不再直接执行“写 MySQL 后立即 Redis Publish”。现在同一个 MySQL 事务完成：
+
+```text
+分配 room_seq → 插入 danmas → 插入 danma_outboxes
+```
+
+事务成功后提交 Kafka offset。独立 Outbox Dispatcher 按数据库顺序发布 Redis，失败时指数退避重试，成功后设置 `published_at`。发布成功但标记前崩溃可能造成重复，因此客户端必须按 `message_id` 去重。
+
+Kafka Producer 同时从异步改为 `Async=false + RequireAll`，使发送端的 `accepted` 建立在 Kafka 确认之后。
+
+详细客户端协议见 `docs/reliable-danmaku-protocol.md`。
+
 ### 11.6 本地验证结果
 
 已执行并通过：

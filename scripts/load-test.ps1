@@ -20,7 +20,9 @@ param(
     [string]$RampInterval = "10ms",
     [string]$Warmup = "2s",
     [string]$Duration = "30s",
-    [string]$Drain = "5s",
+	[string]$Drain = "5s",
+	[ValidateRange(0, 1000000)]
+	[int]$AckEvery = 0,
 
     [switch]$StartTunnel,
     [string]$SshTarget = "",
@@ -199,7 +201,10 @@ function Invoke-Benchmark {
 		"-warmup", $Warmup,
 		"-d", $Duration,
 		"-drain", $Drain
-    )
+	)
+	if ($AckEvery -gt 0) {
+		$arguments += @("-ack-every", $AckEvery.ToString())
+	}
     if ($ActiveClients -ge 0) {
         $arguments += @("-active-clients", $ActiveClients.ToString())
     }

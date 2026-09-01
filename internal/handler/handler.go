@@ -382,3 +382,32 @@ func GetDanmaHistory(c *gin.Context) {
 	})
 
 }
+
+func ReplayDanmaHistory(c *gin.Context) {
+	roomID, err := strconv.ParseUint(c.Param("room_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "room id格式错误"})
+		return
+	}
+	afterSeq, err := strconv.ParseUint(c.DefaultQuery("after_seq", "0"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "after_seq格式错误"})
+		return
+	}
+	limit, err := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "limit格式错误"})
+		return
+	}
+
+	data, err := service.ReplayDanmaHistory(c.Request.Context(), roomID, afterSeq, limit)
+	if err != nil {
+		log.Printf("replay danma history failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "恢复历史弹幕失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data":    data,
+		"message": "恢复历史弹幕成功",
+	})
+}

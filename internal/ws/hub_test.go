@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestHubRunProcessesMoreThanWorkerCount(t *testing.T) {
@@ -115,7 +117,10 @@ func TestPresenceUpdatesAreCoalesced(t *testing.T) {
 func TestTrySendDistinguishesFullAndClosed(t *testing.T) {
 	hub := newHub(1)
 	client := NewClient(hub, nil, 1, 1, "tester")
-	data := []byte(`{"type":"danma"}`)
+	data, err := websocket.NewPreparedMessage(websocket.TextMessage, []byte(`{"type":"danma"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for i := 0; i < cap(client.send); i++ {
 		if result := client.trySend(data); result != enqueueOK {
@@ -143,7 +148,7 @@ func TestBroadcastReusesSerializedPayload(t *testing.T) {
 	hub.broadcastToRoom(&Message{RoomID: 1, Type: "danma", Content: "hello"})
 	firstPayload := <-first.send
 	secondPayload := <-second.send
-	if len(firstPayload) == 0 || len(secondPayload) == 0 || &firstPayload[0] != &secondPayload[0] {
+	if firstPayload == nil || secondPayload == nil || firstPayload != secondPayload {
 		t.Fatal("broadcast created a different serialized payload for each client")
 	}
 	if got := hub.metrics.deliveryEnqueuedTotal.Load(); got != 2 {
@@ -155,7 +160,10 @@ func TestQueueFullClosesAndUnregistersClient(t *testing.T) {
 	hub := newHub(1)
 	client := NewClient(hub, nil, 1, 1, "tester")
 	hub.handleRegister(client)
-	data := []byte(`{"type":"danma"}`)
+	data, err := websocket.NewPreparedMessage(websocket.TextMessage, []byte(`{"type":"danma"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < cap(client.send); i++ {
 		client.send <- data
 	}
@@ -207,5 +215,19 @@ func TestMetricsHandler(t *testing.T) {
 	}
 	if snapshot.BroadcastDuration.Count != 1 {
 		t.Fatalf("broadcast duration count = %d, want 1", snapshot.BroadcastDuration.Count)
+	}
+}
+
+func TestClientAcknowledgementOnlyMovesForward(t *testing.T) {
+	client := NewClient(newHub(1), nil, 1, 1, "tester")
+	client.acknowledge(10)
+	client.acknowledge(7)
+	client.acknowledge(10)
+	if got := client.lastAck.Load(); got != 10 {
+		t.Fatalf("last ack = %d, want 10", got)
+	}
+	client.acknowledge(11)
+	if got := client.lastAck.Load(); got != 11 {
+		t.Fatalf("last ack = %d, want 11", got)
 	}
 }

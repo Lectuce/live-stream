@@ -829,6 +829,8 @@ Set-Location D:\GoProjects\live-stream
 
 `-MaxLossPercent` 默认是 `0`，即任何投递缺口都会使测试失败；例如 `-MaxLossPercent 0.1` 允许最多 0.1% 的投递缺失。接收数大于期望投递数会按重复投递直接失败。压测消息携带纳秒发送时间，输出中的 `latency_p50`、`latency_p95`、`latency_p99` 来自固定桶直方图，不会随消息量保存延迟样本。
 
+可靠协议回归时可增加 `-AckEvery 50`。这会让每个监听客户端每连续处理约 50 条弹幕后发送一次累计 ACK；`0` 表示关闭 ACK。ACK 会形成额外的客户端到服务端流量，应分别记录“关闭 ACK 的纯扇出测试”和“开启 ACK 的可靠协议测试”。
+
 `-ActiveClients 10` 表示只有 10 个连接携带登录 `sid` 并发送弹幕，其余 990 个连接按游客监听。也可以继续使用 `-ActiveRatio 0.01`，脚本会把它换算为确定数量；显式的 `-ActiveClients` 优先级更高。只测试建连时使用：
 
 ```powershell

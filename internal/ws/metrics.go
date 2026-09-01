@@ -45,6 +45,7 @@ type hubMetrics struct {
 	queueFullTotal         atomic.Uint64
 	writeErrorsTotal       atomic.Uint64
 	closedClientsTotal     atomic.Uint64
+	ackTotal               atomic.Uint64
 	broadcastDuration      durationHistogram
 }
 
@@ -61,6 +62,7 @@ type MetricsSnapshot struct {
 	QueueFullTotal         uint64                    `json:"ws_queue_full_total"`
 	WriteErrorsTotal       uint64                    `json:"ws_write_errors_total"`
 	ClosedClientsTotal     uint64                    `json:"ws_closed_clients_total"`
+	AckTotal               uint64                    `json:"ws_ack_total"`
 	BroadcastDuration      durationHistogramSnapshot `json:"ws_broadcast_duration"`
 	ClientQueueDepth       int64                     `json:"ws_client_queue_depth"`
 }
@@ -82,6 +84,7 @@ func (h *Hub) MetricsSnapshot() MetricsSnapshot {
 		QueueFullTotal:         h.metrics.queueFullTotal.Load(),
 		WriteErrorsTotal:       h.metrics.writeErrorsTotal.Load(),
 		ClosedClientsTotal:     h.metrics.closedClientsTotal.Load(),
+		AckTotal:               h.metrics.ackTotal.Load(),
 		BroadcastDuration: durationHistogramSnapshot{
 			Count:          h.metrics.broadcastDuration.count.Load(),
 			SumNanoseconds: h.metrics.broadcastDuration.sumNanos.Load(),
@@ -129,11 +132,12 @@ func (h *Hub) metricsWorker() {
 		case <-ticker.C:
 			metrics := h.MetricsSnapshot()
 			log.Printf(
-				"ws metrics connections=%d queue_full_total=%d write_errors_total=%d closed_clients_total=%d client_queue_depth=%d",
+				"ws metrics connections=%d queue_full_total=%d write_errors_total=%d closed_clients_total=%d ack_total=%d client_queue_depth=%d",
 				metrics.Connections,
 				metrics.QueueFullTotal,
 				metrics.WriteErrorsTotal,
 				metrics.ClosedClientsTotal,
+				metrics.AckTotal,
 				metrics.ClientQueueDepth,
 			)
 		}
