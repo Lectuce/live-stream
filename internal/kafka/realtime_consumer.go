@@ -27,14 +27,20 @@ func StartRealtimeConsumer(ctx context.Context) error {
 	cfg := config.GlobalConfig.Kafka
 	groupID := cfg.GroupID + "-realtime"
 	reader := kafkago.NewReader(kafkago.ReaderConfig{
-		Brokers:          cfg.Brokers,
-		GroupID:          groupID,
-		Topic:            cfg.DanmuTopic,
-		StartOffset:      kafkago.LastOffset,
-		MinBytes:         1,
-		MaxBytes:         10e6,
-		MaxWait:          time.Second,
-		ReadBatchTimeout: 5 * time.Second,
+		Brokers:     cfg.Brokers,
+		GroupID:     groupID,
+		Topic:       cfg.DanmuTopic,
+		StartOffset: kafkago.LastOffset,
+		MinBytes:    1,
+		MaxBytes:    10e6,
+		// The realtime group optimizes for latency, not batch size. MaxWait=0
+		// would select kafka-go's 10 second default, so keep this explicit.
+		MaxWait:          50 * time.Millisecond,
+		ReadBatchTimeout: time.Second,
+		// CommitMessages becomes asynchronous when CommitInterval is non-zero.
+		// Redis publication still happens first, but coordinator round trips no
+		// longer pause the realtime fetch/publish loop.
+		CommitInterval: realtimeCommitWait,
 		ErrorLogger: kafkago.LoggerFunc(func(format string, args ...any) {
 			log.Printf("kafka realtime reader: "+format, args...)
 		}),
@@ -70,9 +76,13 @@ func StartRealtimeConsumer(ctx context.Context) error {
 		if len(pendingCommits) == 0 {
 			return nil
 		}
+		startedAt := time.Now()
 		if err := commitUntilSuccess(commitCtx, reader, pendingCommits...); err != nil {
+			realtimeMetrics.commitEnqueue.observe(time.Since(startedAt))
 			return err
 		}
+		realtimeMetrics.commitEnqueue.observe(time.Since(startedAt))
+		realtimeMetrics.commitBatchTotal.Add(1)
 		pendingCommits = pendingCommits[:0]
 		return nil
 	}
@@ -106,6 +116,10 @@ func StartRealtimeConsumer(ctx context.Context) error {
 					log.Printf("read realtime kafka message err: %v", result.err)
 				}
 				continue
+			}
+			realtimeMetrics.fetchedTotal.Add(1)
+			if !result.message.Time.IsZero() {
+				realtimeMetrics.messageAge.observe(time.Since(result.message.Time))
 			}
 
 			var event model.Message
@@ -214,8 +228,11 @@ func flushLikeStates(ctx context.Context, dirty map[uint64]int64) error {
 }
 
 func publishRealtimeUntilSuccess(ctx context.Context, payload string) error {
+	startedAt := time.Now()
 	for attempt := 1; ; attempt++ {
 		if err := dao.Publish(ctx, dao.DanmuChannel, payload); err == nil {
+			realtimeMetrics.redisPublish.observe(time.Since(startedAt))
+			realtimeMetrics.publishedTotal.Add(1)
 			return nil
 		} else if attempt == 1 || attempt%10 == 0 {
 			log.Printf("publish realtime danmu failed, attempt=%d: %v", attempt, err)

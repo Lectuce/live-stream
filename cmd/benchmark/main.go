@@ -56,8 +56,12 @@ var latencyBucketUpperBounds = [...]time.Duration{
 	100 * time.Millisecond,
 	250 * time.Millisecond,
 	500 * time.Millisecond,
+	750 * time.Millisecond,
 	time.Second,
+	1500 * time.Millisecond,
 	2 * time.Second,
+	3 * time.Second,
+	4 * time.Second,
 	5 * time.Second,
 	10 * time.Second,
 }

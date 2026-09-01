@@ -7,6 +7,7 @@ import (
 	"live-stream/internal/dao"
 	"live-stream/internal/model"
 	"log"
+	"time"
 )
 
 func StartRedisSubscriber(ctx context.Context, hub *Hub) error {
@@ -46,6 +47,9 @@ func StartRedisSubscriber(ctx context.Context, hub *Hub) error {
 			if message.Type == model.MsgTypeSystem {
 				hub.handleStateUpdate(&message)
 				continue
+			}
+			if message.Type == model.MsgTypeDanma && message.CreatedAt != nil {
+				hub.metrics.realtimeMessageAge.observe(time.Since(*message.CreatedAt))
 			}
 			hub.enqueueBroadcast(message)
 		}

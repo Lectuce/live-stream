@@ -15,6 +15,7 @@ param(
 
     [ValidateRange(0.0, 100.0)]
     [double]$MaxLossPercent = 0.0,
+	[string]$MaxP95Latency = "",
 
     [string]$SendInterval = "2s",
     [string]$RampInterval = "10ms",
@@ -53,6 +54,41 @@ function Write-Step {
     param([string]$Message)
     Write-Host "`n==> $Message" -ForegroundColor Cyan
 }
+
+function Convert-GoDurationToMilliseconds {
+	param([string]$DurationText)
+
+	if ([string]::IsNullOrWhiteSpace($DurationText)) {
+		return $null
+	}
+	$parts = [regex]::Matches($DurationText, "(?<value>\d+(?:\.\d+)?)(?<unit>ms|us|µs|ns|h|m|s)")
+	if ($parts.Count -eq 0) {
+		throw "Invalid Go duration '$DurationText'. Examples: 500ms, 1s, 1.5s."
+	}
+	$reconstructed = ($parts | ForEach-Object { $_.Value }) -join ""
+	if ($reconstructed -ne $DurationText) {
+		throw "Invalid Go duration '$DurationText'. Examples: 500ms, 1s, 1.5s."
+	}
+	$totalMilliseconds = 0.0
+	foreach ($part in $parts) {
+		$value = [double]::Parse(
+			$part.Groups["value"].Value,
+			[System.Globalization.CultureInfo]::InvariantCulture
+		)
+		switch ($part.Groups["unit"].Value) {
+			"h"  { $totalMilliseconds += $value * 3600000.0 }
+			"m"  { $totalMilliseconds += $value * 60000.0 }
+			"s"  { $totalMilliseconds += $value * 1000.0 }
+			"ms" { $totalMilliseconds += $value }
+			"us" { $totalMilliseconds += $value / 1000.0 }
+			"µs" { $totalMilliseconds += $value / 1000.0 }
+			"ns" { $totalMilliseconds += $value / 1000000.0 }
+		}
+	}
+	return $totalMilliseconds
+}
+
+$maxP95LatencyMilliseconds = Convert-GoDurationToMilliseconds -DurationText $MaxP95Latency
 
 function Test-TcpPort {
     param(
@@ -260,6 +296,13 @@ function Invoke-Benchmark {
 	if (-not $protocolMatch.Success) {
 		throw "Unable to parse benchmark protocol metrics: $finalLine"
 	}
+	$latencyMatch = [regex]::Match(
+		$finalLine,
+		"latency_samples=(?<samples>\d+) latency_p50=(?<p50>\S+) latency_p95=(?<p95>\S+) latency_p99=(?<p99>\S+)"
+	)
+	if (-not $latencyMatch.Success) {
+		throw "Unable to parse benchmark latency metrics: $finalLine"
+	}
 
     $sent = [int64]$metricsMatch.Groups["sent"].Value
     $received = [int64]$metricsMatch.Groups["received"].Value
@@ -276,6 +319,11 @@ function Invoke-Benchmark {
     $dialFailed = [int64]$connectionMatch.Groups["failed"].Value
 	$ackSent = [int64]$protocolMatch.Groups["ack"].Value
 	$resyncRequired = [int64]$protocolMatch.Groups["resync"].Value
+	$latencySamples = [int64]$latencyMatch.Groups["samples"].Value
+	$latencyP50 = $latencyMatch.Groups["p50"].Value
+	$latencyP95 = $latencyMatch.Groups["p95"].Value
+	$latencyP99 = $latencyMatch.Groups["p99"].Value
+	$latencyP95Milliseconds = Convert-GoDurationToMilliseconds -DurationText $latencyP95
 
     if ($errors -ne 0) {
         throw "Benchmark reported $errors errors"
@@ -297,6 +345,9 @@ function Invoke-Benchmark {
 		$limitText = $MaxLossPercent.ToString("0.######", [System.Globalization.CultureInfo]::InvariantCulture)
 		throw "Delivery loss exceeded limit: missing=$missing loss=$lossText% limit=$limitText%"
 	}
+	if ($sendingEnabled -and $null -ne $maxP95LatencyMilliseconds -and $latencyP95Milliseconds -gt $maxP95LatencyMilliseconds) {
+		throw "P95 latency exceeded limit: measured=$latencyP95 limit=$MaxP95Latency"
+	}
 
     return [pscustomobject]@{
         Sent            = $sent
@@ -311,6 +362,10 @@ function Invoke-Benchmark {
         DialFailed      = $dialFailed
 		AckSent         = $ackSent
 		ResyncRequired  = $resyncRequired
+		LatencySamples  = $latencySamples
+		LatencyP50      = $latencyP50
+		LatencyP95      = $latencyP95
+		LatencyP99      = $latencyP99
         FinalLine       = $finalLine
     }
 }
@@ -486,4 +541,6 @@ Write-Host "Missing deliveries: $($benchmarkResult.Missing)"
 Write-Host "Loss: $($benchmarkResult.LossPercent.ToString('0.######', [System.Globalization.CultureInfo]::InvariantCulture))%"
 Write-Host "ACK sent: $($benchmarkResult.AckSent)"
 Write-Host "Resync required: $($benchmarkResult.ResyncRequired)"
+Write-Host "Latency samples: $($benchmarkResult.LatencySamples)"
+Write-Host "Latency P50/P95/P99: $($benchmarkResult.LatencyP50) / $($benchmarkResult.LatencyP95) / $($benchmarkResult.LatencyP99)"
 Write-Host "History matches: $historyCount"

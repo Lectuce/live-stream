@@ -695,6 +695,7 @@ docker stats
 
 ```bash
 curl http://127.0.0.1:6060/debug/ws/metrics
+curl http://127.0.0.1:6060/debug/kafka/realtime
 go tool pprof "http://127.0.0.1:6060/debug/pprof/profile?seconds=60"
 ```
 
@@ -829,6 +830,8 @@ Set-Location D:\GoProjects\live-stream
 
 `-MaxLossPercent` 默认是 `0`，即任何投递缺口都会使测试失败；例如 `-MaxLossPercent 0.1` 允许最多 0.1% 的投递缺失。接收数大于期望投递数会按重复投递直接失败。压测消息携带纳秒发送时间，输出中的 `latency_p50`、`latency_p95`、`latency_p99` 来自固定桶直方图，不会随消息量保存延迟样本。
 
+使用 `-MaxP95Latency 500ms` 可以把延迟纳入成功条件。省略该参数时只输出延迟、不按延迟判定；建议低负载基线使用 300～500ms，高连接数测试再根据业务目标调整。
+
 可靠协议回归时可增加 `-AckEvery 50`。这会让每个监听客户端每处理约 50 条带 Kafka 游标的弹幕后发送一次最大游标 ACK；`room_seq` 对单房间递增但允许不连续。`0` 表示关闭 ACK，也是普通扇出压测的推荐值。ACK 当前不驱动服务端重传，应分别记录“关闭 ACK 的纯扇出测试”和“开启 ACK 的协议成本测试”。
 
 热点房间已拆为 16 个客户端 shard。诊断接口新增：
@@ -838,6 +841,10 @@ Set-Location D:\GoProjects\live-stream
 - `ws_resync_required_total`：实时队列出现缺口后发出的重同步提示；
 - `ws_slow_client_disconnect_total`：持续队列满后主动关闭的客户端；
 - `ws_control_queue_full_total`：高优先级控制队列也无法写入的次数。
+- `ws_realtime_message_age`：消息到达 Redis Subscriber 时距离 Kafka 消息时间戳的时间；
+- `/debug/kafka/realtime` 中的 `kafka_realtime_message_age`：realtime Consumer Fetch 时的消息年龄；
+- `kafka_realtime_redis_publish_duration`：Redis Publish 调用耗时；
+- `kafka_realtime_commit_enqueue_duration`：offset 交给异步提交循环的耗时。
 
 如果 `ws_fanout_shard_duration` 很低而 `ws_client_queue_depth` 持续增长，瓶颈位于 Socket、网络或压测机接收端，继续增加 fan-out worker 只会更快填满客户端队列。
 

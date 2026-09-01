@@ -101,6 +101,7 @@ func startDiagnosticsServer(hub *ws.Hub) *http.Server {
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	mux.Handle("/debug/ws/metrics", hub.MetricsHandler())
+	mux.Handle("/debug/kafka/realtime", kafka.RealtimeMetricsHandler())
 
 	server := &http.Server{
 		Addr:              "127.0.0.1:6060",

@@ -18,6 +18,9 @@ var broadcastDurationBounds = [...]time.Duration{
 	50 * time.Millisecond,
 	100 * time.Millisecond,
 	500 * time.Millisecond,
+	time.Second,
+	2 * time.Second,
+	5 * time.Second,
 }
 
 type durationHistogram struct {
@@ -51,6 +54,7 @@ type hubMetrics struct {
 	ackTotal                  atomic.Uint64
 	broadcastDuration         durationHistogram
 	fanoutShardDuration       durationHistogram
+	realtimeMessageAge        durationHistogram
 }
 
 type durationHistogramSnapshot struct {
@@ -72,12 +76,14 @@ type MetricsSnapshot struct {
 	AckTotal                  uint64                    `json:"ws_ack_total"`
 	BroadcastDuration         durationHistogramSnapshot `json:"ws_broadcast_duration"`
 	FanoutShardDuration       durationHistogramSnapshot `json:"ws_fanout_shard_duration"`
+	RealtimeMessageAge        durationHistogramSnapshot `json:"ws_realtime_message_age"`
 	ClientQueueDepth          int64                     `json:"ws_client_queue_depth"`
 }
 
 func (h *Hub) MetricsSnapshot() MetricsSnapshot {
 	broadcastHistogram := snapshotDurationHistogram(&h.metrics.broadcastDuration)
 	fanoutHistogram := snapshotDurationHistogram(&h.metrics.fanoutShardDuration)
+	realtimeAgeHistogram := snapshotDurationHistogram(&h.metrics.realtimeMessageAge)
 
 	return MetricsSnapshot{
 		Connections:               h.metrics.connections.Load(),
@@ -92,6 +98,7 @@ func (h *Hub) MetricsSnapshot() MetricsSnapshot {
 		AckTotal:                  h.metrics.ackTotal.Load(),
 		BroadcastDuration:         broadcastHistogram,
 		FanoutShardDuration:       fanoutHistogram,
+		RealtimeMessageAge:        realtimeAgeHistogram,
 		ClientQueueDepth:          h.clientQueueDepth(),
 	}
 }

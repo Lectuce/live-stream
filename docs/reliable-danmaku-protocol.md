@@ -175,6 +175,7 @@ docker exec kafka kafka-consumer-groups --bootstrap-server localhost:29092 \
 
 ```bash
 curl http://127.0.0.1:6060/debug/ws/metrics
+curl http://127.0.0.1:6060/debug/kafka/realtime
 ```
 
 重点关注：

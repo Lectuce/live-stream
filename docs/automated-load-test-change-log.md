@@ -474,6 +474,20 @@ git diff --check
 
 部署后必须先跑 100、1000 连接且 `AckEvery=0`，再逐级增加到 10,000。服务端同时保存 `/debug/ws/metrics`、两个 Consumer Group 的 Lag、CPU profile、网卡吞吐和压测机资源；不能仅凭连接数判断优化成功。
 
+### 15.7 低流量实时延迟优化
+
+100 个连接、1 个发送者的隔离测试仍出现 `P50<=2s`、`P95<=5s`，证明该延迟不是热点房间扇出负载造成的。本轮进一步调整：
+
+- realtime Kafka Reader 的 `MaxWait` 从 1 秒降为 50ms，`ReadBatchTimeout` 从 5 秒降为 1 秒；
+- realtime Reader 设置 `CommitInterval=200ms`，Redis 发布仍然先完成，但 `CommitMessages` 只将 offset 交给 kafka-go 的异步提交循环，不再阻塞 Fetch/Publish 主循环；
+- persistence Consumer 保留原有批量参数，不牺牲 MySQL 吞吐；
+- 新增 `/debug/kafka/realtime`，输出 Kafka 消息年龄、Redis Publish 耗时和 commit 入队耗时；
+- `/debug/ws/metrics` 新增 `ws_realtime_message_age`，用于判断消息抵达 Redis Subscriber 时已经经历的时间；
+- benchmark 延迟桶增加 750ms、1.5s、3s 和 4s，缩小高延迟区间的估算误差；
+- PowerShell 脚本新增 `-MaxP95Latency`，例如 `-MaxP95Latency 500ms`；超过阈值时即使零丢失也判定失败。
+
+异步提交可能在进程异常退出时重复处理最近一个提交周期内的消息，但不会造成已发布消息丢失；客户端继续按 `message_id` 去重。
+
 ## 14. PreparedMessage 与可靠投递闭环
 
 ### 14.1 PreparedMessage 生产接入
