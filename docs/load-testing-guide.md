@@ -5,7 +5,7 @@
 - SSH 端口转发和连通性验证；
 - 注册、登录、创建房间和开播；
 - WebSocket 连接压测；
-- WebSocket → Kafka → MySQL → Redis → WebSocket 端到端压测；
+- WebSocket → Kafka → realtime Consumer → Redis → WebSocket 实时压测，并行验证 persistence Consumer → MySQL；
 - IPv4、IPv6 直连压测；
 - Kafka 独立吞吐压测；
 - 服务器监控和测试结束清理。
@@ -619,7 +619,7 @@ go run ./cmd/benchmark/kafka -n 1000000 -w 100 -room 1
 go run ./cmd/benchmark/kafka -n 5000000 -w 300 -room 1
 ```
 
-默认写入 `config/config.yaml` 中配置的业务 topic。如果业务消费者仍在运行，消息会继续写入 MySQL 并发布到 Redis。
+默认写入 `config/config.yaml` 中配置的业务 topic。如果两个业务 Consumer Group 仍在运行，消息会由实时组发布到 Redis，并由持久化组独立写入 MySQL。
 
 只测试 Kafka broker 时，应使用独立 topic：
 
@@ -760,7 +760,7 @@ TcpTestSucceeded : False
 | 本地 19000 不监听 | SSH 窗口已关闭、命令未成功认证、本地端口冲突 |
 | WebSocket 403 | Origin 不在白名单、房间尚未开播 |
 | WebSocket 404 | 房间不存在 |
-| WebSocket 能发送但收不到 | Kafka Consumer、MySQL 插入、Redis 发布或 Subscriber 异常 |
+| WebSocket 能发送但收不到 | realtime Kafka Consumer、Redis 发布或 Subscriber 异常；MySQL 不再阻塞实时广播 |
 | HTTP 500 + Unknown column | Repo SQL 字段名与 GORM 模型不一致 |
 | 大量 `connection refused` | 服务未监听、连接建立速度过快、端口或资源限制 |
 | Windows 约 60,000 连接后失败 | 本机临时端口接近耗尽 |
@@ -829,7 +829,17 @@ Set-Location D:\GoProjects\live-stream
 
 `-MaxLossPercent` 默认是 `0`，即任何投递缺口都会使测试失败；例如 `-MaxLossPercent 0.1` 允许最多 0.1% 的投递缺失。接收数大于期望投递数会按重复投递直接失败。压测消息携带纳秒发送时间，输出中的 `latency_p50`、`latency_p95`、`latency_p99` 来自固定桶直方图，不会随消息量保存延迟样本。
 
-可靠协议回归时可增加 `-AckEvery 50`。这会让每个监听客户端每连续处理约 50 条弹幕后发送一次累计 ACK；`0` 表示关闭 ACK。ACK 会形成额外的客户端到服务端流量，应分别记录“关闭 ACK 的纯扇出测试”和“开启 ACK 的可靠协议测试”。
+可靠协议回归时可增加 `-AckEvery 50`。这会让每个监听客户端每处理约 50 条带 Kafka 游标的弹幕后发送一次最大游标 ACK；`room_seq` 对单房间递增但允许不连续。`0` 表示关闭 ACK，也是普通扇出压测的推荐值。ACK 当前不驱动服务端重传，应分别记录“关闭 ACK 的纯扇出测试”和“开启 ACK 的协议成本测试”。
+
+热点房间已拆为 16 个客户端 shard。诊断接口新增：
+
+- `ws_broadcast_duration`：编码并把一条消息分派到全部 shard 的耗时；
+- `ws_fanout_shard_duration`：单个 shard 的快照和客户端入队耗时；
+- `ws_resync_required_total`：实时队列出现缺口后发出的重同步提示；
+- `ws_slow_client_disconnect_total`：持续队列满后主动关闭的客户端；
+- `ws_control_queue_full_total`：高优先级控制队列也无法写入的次数。
+
+如果 `ws_fanout_shard_duration` 很低而 `ws_client_queue_depth` 持续增长，瓶颈位于 Socket、网络或压测机接收端，继续增加 fan-out worker 只会更快填满客户端队列。
 
 `-ActiveClients 10` 表示只有 10 个连接携带登录 `sid` 并发送弹幕，其余 990 个连接按游客监听。也可以继续使用 `-ActiveRatio 0.01`，脚本会把它换算为确定数量；显式的 `-ActiveClients` 优先级更高。只测试建连时使用：
 

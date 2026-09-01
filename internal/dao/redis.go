@@ -64,9 +64,9 @@ func DelSession(ctx context.Context, key string) error {
 }
 
 // IncrRoomLikeCount 房间点赞数 +1（原子操作）
-func IncrRoomLikeCount(ctx context.Context, roomID uint64) {
+func IncrRoomLikeCount(ctx context.Context, roomID uint64) (int64, error) {
 	key := fmt.Sprintf("room:like:%d", roomID)
-	SC.Redis.Incr(ctx, key)
+	return SC.Redis.Incr(ctx, key).Result()
 }
 
 // GetRoomLikeCount 获取房间点赞总数

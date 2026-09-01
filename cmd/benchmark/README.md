@@ -28,7 +28,7 @@ go run ./cmd/benchmark -c 60000 -r 1s -room 1 -origin http://localhost:5173 -sid
 
 每条压测弹幕都会带上发送时间。周期和最终输出提供固定桶估算的 `latency_p50`、`latency_p95`、`latency_p99`，以及参与延迟统计的 `latency_samples`；统计过程不会保存逐条延迟样本。
 
-可靠协议测试可以增加 `-ack-every 50`。每个客户端每连续处理约 50 条带 `room_seq` 的弹幕后发送一次累计 ACK；默认值 `0` 不发送 ACK。压测弹幕同时携带客户端生成的 UUID `message_id`，用于验证服务端幂等链路。
+ACK 协议成本测试可以增加 `-ack-every 50`。每个客户端每处理约 50 条带 `room_seq` 的弹幕后确认已看到的最大 Kafka 游标；该游标对单房间递增，但多个房间共享分区时允许不连续。默认值 `0` 不发送 ACK，也是纯扇出测试的推荐值。压测弹幕同时携带客户端生成的 UUID `message_id`，用于验证服务端幂等链路。最终输出中的 `resync_required` 统计服务端发出的重同步控制消息。
 
 通过 SSH 隧道测试远端服务时，仍可以使用默认 `ws://localhost:9000`，例如：
 

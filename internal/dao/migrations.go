@@ -32,18 +32,6 @@ WHERE d.room_seq IS NULL OR d.room_seq = 0`
 		}
 	}
 
-	const seedCounters = `
-INSERT INTO room_message_sequences (room_id, last_seq, updated_at)
-SELECT room_id, MAX(room_seq), NOW(3)
-FROM danmas
-GROUP BY room_id
-ON DUPLICATE KEY UPDATE
-    last_seq = GREATEST(last_seq, VALUES(last_seq)),
-    updated_at = VALUES(updated_at)`
-	if err := db.Exec(seedCounters).Error; err != nil {
-		return fmt.Errorf("seed room message sequences: %w", err)
-	}
-
 	if !db.Migrator().HasIndex(&model.Danma{}, "idx_danmas_room_seq") {
 		if err := db.Exec(
 			"CREATE UNIQUE INDEX idx_danmas_room_seq ON danmas (room_id, room_seq)",

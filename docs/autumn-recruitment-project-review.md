@@ -95,33 +95,33 @@ WebSocket 握手时校验：
 - 游客可建立连接并接收弹幕，但不能发送弹幕；
 - 携带有效 Session 的用户才能发送。
 
-Hub 按 `room_id` 管理客户端集合。每个 Client 包含独立写队列，读和写由独立 goroutine 处理，避免多个 goroutine 直接并发写同一 WebSocket 连接。
+Hub 按 `room_id` 管理客户端集合，并把同一房间的连接固定分到 16 个 fan-out shard。每个 `room_id + shard` 映射到固定 FIFO worker，不同 shard 可以并行，同一客户端仍保持 `room_seq` 顺序。每个 Client 包含独立实时队列和高优先级控制队列，读写由独立 goroutine 处理。
 
-### 4.4 Kafka → MySQL → Redis Pub/Sub → WebSocket 完整链路
+### 4.4 Kafka 双 Consumer Group 实时与持久化链路
 
 弹幕的端到端路径为：
 
 1. 登录用户通过 WebSocket 发送弹幕；
 2. 服务端填入 `message_id`、`room_id`、`user_id` 和用户名；
 3. Producer 把消息写入 `danmu_topic`；
-4. Consumer Group 拉取消息；
-5. 弹幕先批量写入 MySQL；
-6. 落库成功后发布到 Redis Pub/Sub；
-7. Redis Subscriber 将消息放入 WebSocket Hub 的广播队列；
-8. Hub 将弹幕投递到对应房间的所有在线连接。
+4. realtime Consumer Group 拉取消息，补充 Kafka offset 形成的 `room_seq`；
+5. Redis 发布成功后提交 realtime offset；
+6. Redis Subscriber 将消息放入 WebSocket Hub 的分片广播队列；
+7. persistence Consumer Group 独立批量写入 MySQL，成功后提交自己的 offset；
+8. Hub 将同一个 PreparedMessage 并行投递到房间的 16 个客户端分片。
 
-这个顺序的语义是：只有 MySQL 落库成功的弹幕才进入实时广播，避免“用户看到了弹幕，但历史记录中没有”的明显不一致。
+Kafka `RequireAll` 是共同的可靠交接点。实时展示不再等待 MySQL；数据库故障只会增加 persistence group lag，不会阻塞观众看到弹幕。发布成功但 realtime offset 提交前崩溃可能产生重复，客户端按 `message_id` 去重。
 
 ### 4.5 Kafka Consumer Group、手动提交 offset 和批量落库
 
-Consumer 使用固定 Group ID `live-danmu-consumer`，不使用自动提交，而是在业务处理后调用 `CommitMessages`。
+持久化 Consumer 使用 `live-danmu-consumer`，实时 Consumer 使用 `live-danmu-consumer-realtime`，两者都在业务动作成功后手动提交 offset。
 
 当前策略：
 
 - 最多累积 100 条就处理一次；
 - 不满 100 条时，最多等待约 200ms；
 - MySQL 批量写入失败时重试；
-- 落库最终失败时不发布 Redis，也不提交 offset；
+- 落库失败时只阻塞持久化 offset，不影响实时 Consumer；
 - 批次包含多个 Kafka 分区时，向 `CommitMessages` 传入所有消息，由 kafka-go 分别提交每个分区的最高 offset；
 - `message_id` 在 MySQL 中具有唯一索引，为重复消费提供幂等基础。
 
@@ -129,7 +129,7 @@ Producer 已从 `kafka.LeastBytes{}` 改为 `kafka.Hash{}`。相同 `room_id` �
 
 ### 4.6 慢客户端队列和背压意识
 
-每个 WebSocket Client 有一个容量为 256 的写队列。Hub 使用非阻塞 `trySend`，不允许一个慢客户端直接卡住整个房间的广播遍历。
+每个 WebSocket Client 有容量 256 的实时队列和容量 8 的控制队列。Hub 使用非阻塞 `trySend`；第一次满队列只标记 gap 并发送 `resync_required`，连续满 10 次或持续 1 秒才断开，避免瞬时抖动形成断连雪崩。
 
 这一策略体现了背压意识，但尚未完成生产化：
 

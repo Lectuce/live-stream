@@ -253,6 +253,13 @@ function Invoke-Benchmark {
     if (-not $connectionMatch.Success) {
         throw "Unable to parse benchmark connection metrics: $finalLine"
     }
+	$protocolMatch = [regex]::Match(
+		$finalLine,
+		"ack_sent=(?<ack>\d+) resync_required=(?<resync>\d+)"
+	)
+	if (-not $protocolMatch.Success) {
+		throw "Unable to parse benchmark protocol metrics: $finalLine"
+	}
 
     $sent = [int64]$metricsMatch.Groups["sent"].Value
     $received = [int64]$metricsMatch.Groups["received"].Value
@@ -267,6 +274,8 @@ function Invoke-Benchmark {
     $dialAttempted = [int64]$connectionMatch.Groups["attempted"].Value
     $dialSucceeded = [int64]$connectionMatch.Groups["succeeded"].Value
     $dialFailed = [int64]$connectionMatch.Groups["failed"].Value
+	$ackSent = [int64]$protocolMatch.Groups["ack"].Value
+	$resyncRequired = [int64]$protocolMatch.Groups["resync"].Value
 
     if ($errors -ne 0) {
         throw "Benchmark reported $errors errors"
@@ -300,6 +309,8 @@ function Invoke-Benchmark {
         DialAttempted   = $dialAttempted
         DialSucceeded   = $dialSucceeded
         DialFailed      = $dialFailed
+		AckSent         = $ackSent
+		ResyncRequired  = $resyncRequired
         FinalLine       = $finalLine
     }
 }
@@ -473,4 +484,6 @@ Write-Host "Received: $($benchmarkResult.Received)"
 Write-Host "Expected deliveries: $($benchmarkResult.Expected)"
 Write-Host "Missing deliveries: $($benchmarkResult.Missing)"
 Write-Host "Loss: $($benchmarkResult.LossPercent.ToString('0.######', [System.Globalization.CultureInfo]::InvariantCulture))%"
+Write-Host "ACK sent: $($benchmarkResult.AckSent)"
+Write-Host "Resync required: $($benchmarkResult.ResyncRequired)"
 Write-Host "History matches: $historyCount"

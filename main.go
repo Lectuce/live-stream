@@ -7,7 +7,6 @@ import (
 	"live-stream/internal/dao"
 	"live-stream/internal/kafka"
 	"live-stream/internal/rousters"
-	"live-stream/internal/service"
 	"live-stream/internal/ws"
 	"log"
 	"net/http"
@@ -25,9 +24,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	hub := ws.NewHub()
-	go hub.Run()
-	diagnosticsServer := startDiagnosticsServer(hub)
 	dao.Initdb()
 	dao.InitRedis()
 	if err := kafka.InitKafkaProducer(); err != nil {
@@ -35,6 +31,9 @@ func main() {
 	}
 
 	defer kafka.Close()
+	hub := ws.NewHub()
+	go hub.Run()
+	diagnosticsServer := startDiagnosticsServer(hub)
 	go func() {
 		if err := ws.StartRedisSubscriber(ctx, hub); err != nil {
 			log.Printf("redis subscriber exit: %v", err)
@@ -43,10 +42,14 @@ func main() {
 
 	go func() {
 		if err := kafka.StartKafkaConsumer(ctx); err != nil {
-			log.Printf("kafka consumer exit: %v", err)
+			log.Printf("kafka persistence consumer exit: %v", err)
 		}
 	}()
-	go service.StartDanmaOutboxDispatcher(ctx)
+	go func() {
+		if err := kafka.StartRealtimeConsumer(ctx); err != nil {
+			log.Printf("kafka realtime consumer exit: %v", err)
+		}
+	}()
 
 	r := gin.Default()
 

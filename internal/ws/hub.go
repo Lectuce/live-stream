@@ -13,14 +13,24 @@ import (
 )
 
 type Room struct {
-	clients     map[*Client]bool  // 房间内的连接集合
+	clients     map[*Client]bool // 房间内的连接集合
+	shards      [fanoutShardCount]map[*Client]bool
 	onlineUsers map[uint64]uint64 // 房间内的用户在线计数（同账号多端累加）
-	mu          sync.RWMutex      // 读房间级读写锁，仅保护本房间数据
+	likeCount   int64
+	mu          sync.RWMutex // 读房间级读写锁，仅保护本房间数据
+}
+
+const fanoutShardCount = 16
+
+type fanoutJob struct {
+	roomID uint64
+	shard  int
+	frame  *websocket.PreparedMessage
 }
 
 type Hub struct {
 	rooms           map[uint64]*Room // 全局房间字典， 房间ID -> 房间实例
-	broadcastQueues []chan Message   // 按房间分片的广播队列，每个分片由一个 worker 消费
+	broadcastQueues []chan fanoutJob // 同一房间的客户端分片映射到固定 worker
 	register        chan *Client     // 新连接入房
 	unregister      chan *Client     // 连接退出
 	mu              sync.Mutex       // 全局锁，仅保护rooms字典的增删
@@ -30,6 +40,7 @@ type Hub struct {
 	presenceMu      sync.Mutex
 	presenceDirty   map[uint64]struct{}
 	presencePeriod  time.Duration
+	resyncFrames    sync.Map // room_id -> *websocket.PreparedMessage
 	metrics         hubMetrics
 }
 
@@ -42,9 +53,9 @@ func newHub(workerNum int) *Hub {
 		workerNum = 1
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	queues := make([]chan Message, workerNum)
+	queues := make([]chan fanoutJob, workerNum)
 	for i := range queues {
-		queues[i] = make(chan Message, 4096)
+		queues[i] = make(chan fanoutJob, 4096)
 	}
 	return &Hub{
 		rooms:           make(map[uint64]*Room),
@@ -63,27 +74,46 @@ func (h *Hub) Stop() {
 	h.cancel()
 }
 
-func (h *Hub) broadcastWorker(queue <-chan Message) {
+func (h *Hub) broadcastWorker(queue <-chan fanoutJob) {
 	for {
 		select {
 		case <-h.ctx.Done():
 			return
-		case msg := <-queue:
-			h.broadcastToRoom(&msg)
+		case job := <-queue:
+			startedAt := time.Now()
+			h.broadcastToShard(job.roomID, job.shard, job.frame)
+			h.metrics.fanoutShardDuration.observe(time.Since(startedAt))
 		}
 	}
 }
 
 func (h *Hub) enqueueBroadcast(msg Message) {
-	queue := h.broadcastQueues[h.broadcastQueueIndex(msg.RoomID)]
-	select {
-	case queue <- msg:
-	case <-h.ctx.Done():
+	startedAt := time.Now()
+	frame, err := prepareMessage(&msg)
+	if err != nil {
+		log.Printf("prepare websocket broadcast failed: %v", err)
+		return
+	}
+	h.metrics.broadcastMessagesTotal.Add(1)
+	defer func() {
+		h.metrics.broadcastDuration.observe(time.Since(startedAt))
+	}()
+
+	// A room is split by connection, not by message. Every room+shard pair is
+	// always consumed by the same FIFO worker, so one client never observes two
+	// workers racing to enqueue different room messages.
+	for shard := 0; shard < fanoutShardCount; shard++ {
+		queue := h.broadcastQueues[h.broadcastQueueIndex(msg.RoomID, shard)]
+		select {
+		case queue <- fanoutJob{roomID: msg.RoomID, shard: shard, frame: frame}:
+		case <-h.ctx.Done():
+			return
+		}
 	}
 }
 
-func (h *Hub) broadcastQueueIndex(roomID uint64) int {
-	return int(roomID % uint64(len(h.broadcastQueues)))
+func (h *Hub) broadcastQueueIndex(roomID uint64, shard int) int {
+	return int((roomID*fanoutShardCount + uint64(shard)) % uint64(len(h.broadcastQueues)))
 }
 
 func (h *Hub) Run() {
@@ -117,11 +147,15 @@ func (h *Hub) handleRegister(client *Client) {
 			clients:     make(map[*Client]bool),
 			onlineUsers: make(map[uint64]uint64),
 		}
+		for shard := range room.shards {
+			room.shards[shard] = make(map[*Client]bool)
+		}
 		h.rooms[client.RoomID] = room
 	}
 	room.mu.Lock()
 	if _, exists := room.clients[client]; !exists {
 		room.clients[client] = true
+		room.shards[client.fanoutShard][client] = true
 		room.onlineUsers[client.UserID]++
 		h.metrics.connections.Add(1)
 	}
@@ -147,6 +181,7 @@ func (h *Hub) handleUnregister(client *Client) {
 		return
 	}
 	delete(room.clients, client)
+	delete(room.shards[client.fanoutShard], client)
 	h.metrics.connections.Add(-1)
 	h.metrics.closedClientsTotal.Add(1)
 	room.onlineUsers[client.UserID]--
@@ -208,19 +243,75 @@ func (h *Hub) broadcastOnlineCount(roomID uint64) {
 	room.mu.RLock()
 	h.mu.Unlock()
 	onlineCount := len(room.clients)
+	likeCount := room.likeCount
 	room.mu.RUnlock()
 
 	msg := model.Message{
 		Type:   model.MsgTypeSystem,
 		RoomID: roomID,
 		Data: map[string]interface{}{
-			"sub_type":     "online_count",
+			"sub_type":     "room_state",
 			"online_count": onlineCount,
+			"like_count":   likeCount,
 		},
 	}
 	// Presence is a replaceable state update, so it is deliberately kept out
 	// of the event queue used by danmaku messages.
-	h.broadcastToRoom(&msg)
+	h.broadcastStateToRoom(&msg)
+}
+
+func (h *Hub) handleStateUpdate(msg *Message) {
+	if msg.Data == nil || msg.Data["sub_type"] != "like_count" {
+		return
+	}
+	likeCount, ok := msg.Data["like_count"].(float64)
+	if !ok {
+		return
+	}
+	h.mu.Lock()
+	room, exists := h.rooms[msg.RoomID]
+	if !exists {
+		h.mu.Unlock()
+		return
+	}
+	room.mu.Lock()
+	h.mu.Unlock()
+	room.likeCount = int64(likeCount)
+	room.mu.Unlock()
+	h.broadcastOnlineCount(msg.RoomID)
+}
+
+func (h *Hub) broadcastStateToRoom(msg *Message) {
+	startedAt := time.Now()
+	h.metrics.broadcastMessagesTotal.Add(1)
+	defer func() {
+		h.metrics.broadcastDuration.observe(time.Since(startedAt))
+	}()
+	frame, err := prepareMessage(msg)
+	if err != nil {
+		log.Printf("prepare websocket state broadcast failed: %v", err)
+		return
+	}
+	for shard := 0; shard < fanoutShardCount; shard++ {
+		h.mu.Lock()
+		room, ok := h.rooms[msg.RoomID]
+		if !ok {
+			h.mu.Unlock()
+			return
+		}
+		room.mu.RLock()
+		h.mu.Unlock()
+		clients := make([]*Client, 0, len(room.shards[shard]))
+		for client := range room.shards[shard] {
+			clients = append(clients, client)
+		}
+		room.mu.RUnlock()
+		for _, client := range clients {
+			if client.replaceState(frame) == enqueueOK {
+				h.metrics.deliveryEnqueuedTotal.Add(1)
+			}
+		}
+	}
 }
 
 func (h *Hub) broadcastToRoom(msg *Message) {
@@ -230,47 +321,72 @@ func (h *Hub) broadcastToRoom(msg *Message) {
 		h.metrics.broadcastDuration.observe(time.Since(startedAt))
 	}()
 
+	frame, err := prepareMessage(msg)
+	if err != nil {
+		log.Printf("prepare websocket broadcast failed: %v", err)
+		return
+	}
+	for shard := 0; shard < fanoutShardCount; shard++ {
+		h.broadcastToShard(msg.RoomID, shard, frame)
+	}
+}
+
+func prepareMessage(value any) (*websocket.PreparedMessage, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return websocket.NewPreparedMessage(websocket.TextMessage, data)
+}
+
+func (h *Hub) broadcastToShard(roomID uint64, shard int, frame *websocket.PreparedMessage) {
 	h.mu.Lock()
-	room, ok := h.rooms[msg.RoomID]
+	room, ok := h.rooms[roomID]
 	if !ok {
 		h.mu.Unlock()
 		return
 	}
 	room.mu.RLock()
 	h.mu.Unlock()
-	clients := make([]*Client, 0, len(room.clients))
-	for c := range room.clients {
-		clients = append(clients, c)
+	clients := make([]*Client, 0, len(room.shards[shard]))
+	for client := range room.shards[shard] {
+		clients = append(clients, client)
 	}
 	room.mu.RUnlock()
 
-	data, err := json.Marshal(msg)
-	if err != nil {
-		log.Printf("marshal websocket broadcast failed: %v", err)
-		return
-	}
-	frame, err := websocket.NewPreparedMessage(websocket.TextMessage, data)
-	if err != nil {
-		log.Printf("prepare websocket broadcast failed: %v", err)
-		return
-	}
-	for _, cli := range clients {
-		h.enqueueClient(cli, frame)
+	for _, client := range clients {
+		h.enqueueClient(client, frame)
 	}
 }
 
 func (h *Hub) enqueueJSON(client *Client, value any) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		log.Printf("marshal websocket response failed: %v", err)
-		return
-	}
-	frame, err := websocket.NewPreparedMessage(websocket.TextMessage, data)
+	frame, err := prepareMessage(value)
 	if err != nil {
 		log.Printf("prepare websocket response failed: %v", err)
 		return
 	}
-	h.enqueueClient(client, frame)
+	if result := client.trySendControl(frame); result == enqueueFull {
+		h.metrics.controlQueueFullTotal.Add(1)
+		client.closeConnectionWithReason(4001, "control_queue_full")
+		client.signalUnregister()
+	}
+}
+
+func (h *Hub) resyncFrame(roomID uint64) *websocket.PreparedMessage {
+	if cached, ok := h.resyncFrames.Load(roomID); ok {
+		return cached.(*websocket.PreparedMessage)
+	}
+	frame, err := prepareMessage(map[string]any{
+		"type":    "resync_required",
+		"room_id": roomID,
+		"reason":  "live_queue_gap",
+	})
+	if err != nil {
+		log.Printf("prepare resync control message failed: %v", err)
+		return nil
+	}
+	actual, _ := h.resyncFrames.LoadOrStore(roomID, frame)
+	return actual.(*websocket.PreparedMessage)
 }
 
 func (h *Hub) enqueueClient(client *Client, message *websocket.PreparedMessage) {
@@ -281,7 +397,20 @@ func (h *Hub) enqueueClient(client *Client, message *websocket.PreparedMessage) 
 		// The unregister path already owns cleanup for a closed queue.
 	case enqueueFull:
 		h.metrics.queueFullTotal.Add(1)
-		client.closeConnectionWithReason(4001, "resync_required")
-		client.signalUnregister()
+		notifyGap, disconnect := client.recordQueueFull(time.Now())
+		if notifyGap {
+			h.metrics.resyncRequiredTotal.Add(1)
+			if frame := h.resyncFrame(client.RoomID); frame != nil {
+				if result := client.trySendControl(frame); result == enqueueFull {
+					h.metrics.controlQueueFullTotal.Add(1)
+					disconnect = true
+				}
+			}
+		}
+		if disconnect {
+			h.metrics.slowClientDisconnectTotal.Add(1)
+			client.closeConnectionWithReason(4001, "resync_required")
+			client.signalUnregister()
+		}
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"live-stream/internal/config"
-	"live-stream/internal/dao"
 	"live-stream/internal/model"
 	"live-stream/internal/repo"
 	"log"
@@ -24,12 +23,6 @@ func commitWithRetry(ctx context.Context, reader *kafka.Reader, msgs ...kafka.Me
 	for i := 0; i < maxRetry; i++ {
 		err := reader.CommitMessages(ctx, msgs...)
 		if err == nil {
-			log.Printf(
-				"commit kafka messages success, count=%d, last_partition=%d, last_offset=%d",
-				len(msgs),
-				lastMsg.Partition,
-				lastMsg.Offset,
-			)
 			return nil
 		}
 		if ctx.Err() != nil {
@@ -166,6 +159,7 @@ func StartKafkaConsumer(ctx context.Context) error {
 				_ = commitUntilSuccess(ctx, reader, msg)
 				continue
 			}
+			enrichMessageFromKafka(&danmaMsg, msg)
 			rawMsgs = append(rawMsgs, danmaMsg)
 			msgs = append(msgs, msg)
 			if len(rawMsgs) >= batchSize {
@@ -173,6 +167,23 @@ func StartKafkaConsumer(ctx context.Context) error {
 				ticker.Reset(maxWait)
 			}
 		}
+	}
+}
+
+// Kafka keying keeps every room on one partition. The partition offset is
+// therefore a stable, monotonically increasing cursor for that room. Other
+// rooms sharing the partition can create gaps, so clients compare/order by the
+// cursor but must not assume every next value is exactly previous+1.
+func enrichMessageFromKafka(message *model.Message, kafkaMessage kafka.Message) {
+	if kafkaMessage.Offset >= 0 {
+		message.RoomSeq = uint64(kafkaMessage.Offset) + 1
+	}
+	if message.CreatedAt == nil {
+		createdAt := kafkaMessage.Time
+		if createdAt.IsZero() {
+			createdAt = time.Now()
+		}
+		message.CreatedAt = &createdAt
 	}
 }
 
@@ -190,15 +201,8 @@ func processBatch(ctx context.Context, reader *kafka.Reader, rawMsgs []model.Mes
 		}
 	}
 
-	// 点赞消息：更新 Redis 房间点赞计数
-	for _, msg := range rawMsgs {
-		if msg.Type == model.MsgTypeLike {
-			dao.IncrRoomLikeCount(ctx, msg.RoomID)
-		}
-	}
-
-	// MySQL 中已经同时保存了 outbox，因此此处可以提交 offset。Redis
-	// 发布由独立 dispatcher 重试，避免数据库成功但发布前崩溃造成丢失。
+	// MySQL 成功后再提交持久化 consumer 的 offset。实时广播由另一个
+	// consumer group 独立完成，数据库抖动不会阻塞观众看到弹幕。
 	if len(msgs) > 0 {
 		_ = commitUntilSuccess(ctx, reader, msgs...)
 	}

@@ -14,7 +14,18 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const writeWait = 5 * time.Second
+const (
+	writeWait            = 10 * time.Second
+	pongWait             = 60 * time.Second
+	pingPeriod           = pongWait * 9 / 10
+	clientQueueSize      = 256
+	controlQueueSize     = 8
+	queueFullStrikeLimit = 10
+	queueFullGrace       = time.Second
+	gapNoticeInterval    = 5 * time.Second
+)
+
+var nextConnectionID atomic.Uint64
 
 type enqueueResult uint8
 
@@ -25,29 +36,41 @@ const (
 )
 
 type Client struct {
-	hub      *Hub
-	conn     *websocket.Conn
-	RoomID   uint64                          // 当前客户端所在的房间
-	send     chan *websocket.PreparedMessage // 下发给前端的消息队列
-	UserID   uint64                          // 当前客户端的用户id
-	UserName string
+	hub          *Hub
+	conn         *websocket.Conn
+	RoomID       uint64                          // 当前客户端所在的房间
+	send         chan *websocket.PreparedMessage // 下发给前端的消息队列
+	control      chan *websocket.PreparedMessage // accepted/error/resync 等高优先级控制消息
+	state        chan *websocket.PreparedMessage // 在线人数等可覆盖的最新状态
+	UserID       uint64                          // 当前客户端的用户id
+	UserName     string
+	connectionID uint64
+	fanoutShard  int
 
-	sendMu         sync.RWMutex
-	sendClosed     bool
-	unregisterOnce sync.Once
-	closeOnce      sync.Once
-	closing        atomic.Bool
-	lastAck        atomic.Uint64
+	sendMu          sync.RWMutex
+	sendClosed      bool
+	unregisterOnce  sync.Once
+	closeOnce       sync.Once
+	closing         atomic.Bool
+	lastAck         atomic.Uint64
+	queueFullStreak atomic.Uint32
+	queueFullSince  atomic.Int64
+	lastGapNotice   atomic.Int64
 }
 
 func NewClient(hub *Hub, conn *websocket.Conn, roomID uint64, userID uint64, userName string) *Client {
+	connectionID := nextConnectionID.Add(1)
 	return &Client{
-		hub:      hub,
-		conn:     conn,
-		RoomID:   roomID,
-		UserID:   userID,
-		UserName: userName,
-		send:     make(chan *websocket.PreparedMessage, 256),
+		hub:          hub,
+		conn:         conn,
+		RoomID:       roomID,
+		UserID:       userID,
+		UserName:     userName,
+		connectionID: connectionID,
+		fanoutShard:  int(connectionID % fanoutShardCount),
+		send:         make(chan *websocket.PreparedMessage, clientQueueSize),
+		control:      make(chan *websocket.PreparedMessage, controlQueueSize),
+		state:        make(chan *websocket.PreparedMessage, 1),
 	}
 }
 
@@ -59,10 +82,72 @@ func (c *Client) trySend(message *websocket.PreparedMessage) enqueueResult {
 	}
 	select {
 	case c.send <- message:
+		if c.queueFullStreak.Load() != 0 {
+			c.queueFullStreak.Store(0)
+			c.queueFullSince.Store(0)
+		}
 		return enqueueOK
 	default:
 		return enqueueFull
 	}
+}
+
+func (c *Client) trySendControl(message *websocket.PreparedMessage) enqueueResult {
+	c.sendMu.RLock()
+	defer c.sendMu.RUnlock()
+	if c.sendClosed {
+		return enqueueClosed
+	}
+	select {
+	case c.control <- message:
+		return enqueueOK
+	default:
+		return enqueueFull
+	}
+}
+
+func (c *Client) replaceState(message *websocket.PreparedMessage) enqueueResult {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.sendClosed {
+		return enqueueClosed
+	}
+	select {
+	case c.state <- message:
+		return enqueueOK
+	default:
+	}
+	// State is replaceable: discard the stale value and keep only the newest.
+	select {
+	case <-c.state:
+	default:
+	}
+	c.state <- message
+	return enqueueOK
+}
+
+// recordQueueFull distinguishes a short burst from a persistently slow
+// connection. The first dropped live event emits one resync hint; only a
+// sustained high-water mark closes the socket.
+func (c *Client) recordQueueFull(now time.Time) (notifyGap, disconnect bool) {
+	nowNanos := now.UnixNano()
+	if c.queueFullSince.Load() == 0 {
+		c.queueFullSince.CompareAndSwap(0, nowNanos)
+	}
+	streak := c.queueFullStreak.Add(1)
+	for {
+		lastNotice := c.lastGapNotice.Load()
+		if lastNotice != 0 && nowNanos-lastNotice < int64(gapNoticeInterval) {
+			break
+		}
+		if c.lastGapNotice.CompareAndSwap(lastNotice, nowNanos) {
+			notifyGap = true
+			break
+		}
+	}
+	since := c.queueFullSince.Load()
+	disconnect = streak >= queueFullStrikeLimit || (since > 0 && nowNanos-since >= int64(queueFullGrace))
+	return notifyGap, disconnect
 }
 
 func (c *Client) closeSend() {
@@ -73,6 +158,8 @@ func (c *Client) closeSend() {
 	}
 	c.sendClosed = true
 	close(c.send)
+	close(c.control)
+	close(c.state)
 }
 
 func (c *Client) signalUnregister() {
@@ -122,6 +209,13 @@ func (c *Client) readPump() {
 		c.closeConnection()
 		c.signalUnregister()
 	}()
+
+	if err := c.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+		return
+	}
+	c.conn.SetPongHandler(func(string) error {
+		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	})
 
 	for {
 		var msg Message
@@ -195,22 +289,97 @@ func (c *Client) writePump() {
 		c.closeConnection()
 		c.signalUnregister()
 	}()
-	for {
-		message, ok := <-c.send
-		if !ok {
-			break
-		}
+	ticker := time.NewTicker(pingPeriod)
+	defer ticker.Stop()
+	dataChannel := c.send
+	controlChannel := c.control
+	stateChannel := c.state
+
+	writePrepared := func(message *websocket.PreparedMessage) bool {
 		if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
-			if !c.isClosing() {
-				c.hub.metrics.writeErrorsTotal.Add(1)
-			}
-			break
+			return false
 		}
-		if err := c.conn.WritePreparedMessage(message); err != nil {
-			if !c.isClosing() {
-				c.hub.metrics.writeErrorsTotal.Add(1)
+		return c.conn.WritePreparedMessage(message) == nil
+	}
+
+	for dataChannel != nil || controlChannel != nil || stateChannel != nil {
+		// Control messages must not wait behind hundreds of stale danmaku.
+		if controlChannel != nil {
+			select {
+			case message, ok := <-controlChannel:
+				if !ok {
+					controlChannel = nil
+					continue
+				}
+				if !writePrepared(message) {
+					if !c.isClosing() {
+						c.hub.metrics.writeErrorsTotal.Add(1)
+					}
+					return
+				}
+				continue
+			default:
 			}
-			break
+		}
+		if stateChannel != nil {
+			select {
+			case message, ok := <-stateChannel:
+				if !ok {
+					stateChannel = nil
+					continue
+				}
+				if !writePrepared(message) {
+					if !c.isClosing() {
+						c.hub.metrics.writeErrorsTotal.Add(1)
+					}
+					return
+				}
+				continue
+			default:
+			}
+		}
+
+		select {
+		case message, ok := <-controlChannel:
+			if !ok {
+				controlChannel = nil
+				continue
+			}
+			if !writePrepared(message) {
+				if !c.isClosing() {
+					c.hub.metrics.writeErrorsTotal.Add(1)
+				}
+				return
+			}
+		case message, ok := <-dataChannel:
+			if !ok {
+				dataChannel = nil
+				continue
+			}
+			if !writePrepared(message) {
+				if !c.isClosing() {
+					c.hub.metrics.writeErrorsTotal.Add(1)
+				}
+				return
+			}
+		case message, ok := <-stateChannel:
+			if !ok {
+				stateChannel = nil
+				continue
+			}
+			if !writePrepared(message) {
+				if !c.isClosing() {
+					c.hub.metrics.writeErrorsTotal.Add(1)
+				}
+				return
+			}
+		case <-ticker.C:
+			if err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)); err != nil {
+				if !c.isClosing() {
+					c.hub.metrics.writeErrorsTotal.Add(1)
+				}
+				return
+			}
 		}
 	}
 }

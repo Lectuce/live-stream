@@ -391,6 +391,89 @@ IPv6 地址在 HTTP/WebSocket URL 中仍使用方括号；脚本执行 TCP 连�
 | `docs/load-testing-guide.md` | 新参数说明、IPv4/IPv6 直连命令和 SSH 使用边界 |
 | `docs/automated-load-test-change-log.md` | 本节修改记录 |
 
+## 15. 热点房间有序并行与 Kafka 双消费链路（2026-09-01）
+
+本轮针对 10,000 连接、10 个发送者测试中出现的持续积压、6227 个连接断开和约 42% 最终投递缺口进行结构调整。不能把结果简单归因于单 worker，因此同时保留分派耗时、单 shard 扇出耗时和客户端队列水位指标，用后续 profile 判断真正瓶颈。
+
+### 15.1 同房间客户端分片
+
+- 一个房间的连接按连接 ID 固定分为 16 个 shard；
+- 每个 `room_id + shard` 固定映射到一个 FIFO worker；
+- 一条消息只 Marshal 和创建一次 PreparedMessage；
+- 16 个 shard 可并行，同一客户端不会被多个 worker 竞争入队；
+- 新增测试验证客户端均匀分片、映射稳定和每客户端 FIFO 顺序。
+
+这与“不同弹幕随机交给任意 worker”不同。随机处理可以提高表面吞吐，但会让同一客户端乱序。
+
+### 15.2 慢客户端宽限和控制队列
+
+- 实时队列继续保持 256，不扩大为高内存的 4096；
+- 增加容量 8 的控制队列，优先传递 `accepted`、错误和 `resync_required`；
+- 在线人数与点赞总数合并成 `room_state`，使用独立容量 1 状态槽；新状态覆盖旧状态，不进入弹幕积压队列；
+- 第一次实时队列满只丢本次投递并通知重同步；持续出现缺口时同一连接最多每 5 秒提示一次；
+- 连续满 10 次或持续满 1 秒后才用 4001 关闭；
+- WriteDeadline 调整为 10 秒，并增加 Ping/Pong 存活检测；
+- 新增 `control_queue_full`、`resync_required` 和 `slow_client_disconnect` 指标。
+
+严格零缺口测试仍会把任何丢弃判为失败。宽限的意义是避免一次瞬时抖动让数千连接同时退出，不是把丢失伪装成成功。
+
+### 15.3 Kafka 取代 Outbox 热路径
+
+旧路径：
+
+```text
+Kafka → MySQL + Outbox → Redis → WebSocket
+```
+
+新路径：
+
+```text
+                              ┌→ live-danmu-consumer-realtime → Redis → WebSocket
+WebSocket → Kafka RequireAll ─┤
+                              └→ live-danmu-consumer → MySQL
+```
+
+- realtime group 在 Redis Publish 成功后提交 offset；
+- 点赞事件由 realtime group 在 Redis 中累加，并按刷新周期只广播最新总数，避免每次点赞都扇出到全房间；
+- 点赞最新状态也必须发布成功后才提交 realtime offset；Kafka offset 提交成功不再逐批打印，避免 200ms 批次在压测期间形成日志 I/O 热点；
+- persistence group 在 MySQL 成功后提交 offset；
+- 两条链路互不等待；
+- `message_id` 处理至少一次广播造成的重复；
+- `room_id` Hash Key 保证同一房间固定 Kafka 分区；
+- `room_seq=partition_offset+1`，对单房间严格递增但允许不连续；
+- 删除 Outbox Dispatcher、Outbox Repo 和 Outbox Model，旧数据库中的遗留表不会再被运行时代码使用。
+
+### 15.4 ACK 与压测口径
+
+- 普通扇出压测保持 `AckEvery=0`；
+- ACK 仅用于单独测协议成本；
+- benchmark 不再假设 `room_seq` 必须连续，而是确认已处理的最大 Kafka 游标；
+- 最终输出增加 `resync_required`，用于区分主动重同步和普通 Socket 错误；
+- 当前 benchmark 仍未自动执行 4001 后重连补拉，因此恢复闭环需要单独测试。
+
+### 15.5 新增诊断指标
+
+```text
+ws_fanout_shard_duration
+ws_control_queue_full_total
+ws_resync_required_total
+ws_slow_client_disconnect_total
+```
+
+`ws_broadcast_duration` 现在表示单条消息编码并分派到 16 个 shard 队列的耗时；`ws_fanout_shard_duration` 表示一个 shard 复制客户端快照并入队的耗时。
+
+### 15.6 验证
+
+本地已经执行：
+
+```text
+go test ./...
+go vet ./...
+git diff --check
+```
+
+部署后必须先跑 100、1000 连接且 `AckEvery=0`，再逐级增加到 10,000。服务端同时保存 `/debug/ws/metrics`、两个 Consumer Group 的 Lag、CPU profile、网卡吞吐和压测机资源；不能仅凭连接数判断优化成功。
+
 ## 14. PreparedMessage 与可靠投递闭环
 
 ### 14.1 PreparedMessage 生产接入

@@ -228,7 +228,7 @@ WebSocket
 3. 完成注册、登录、Redis Session 和鉴权中间件。
 4. 完成房间 CRUD 与房主权限。
 5. 完成历史消息游标分页。
-6. 改造 Kafka → MySQL → Redis 消息链路。
+6. 改造 Kafka 双 Consumer Group：实时组 → Redis → WebSocket，持久化组 → MySQL。
 7. 添加登录限流、弹幕频率限制和单条消息长度限制。
 8. 为认证、权限、幂等消费和历史分页编写测试。
 

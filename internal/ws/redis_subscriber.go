@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"live-stream/internal/dao"
+	"live-stream/internal/model"
 	"log"
 )
 
@@ -42,6 +43,10 @@ func StartRedisSubscriber(ctx context.Context, hub *Hub) error {
 				continue
 			}
 
+			if message.Type == model.MsgTypeSystem {
+				hub.handleStateUpdate(&message)
+				continue
+			}
 			hub.enqueueBroadcast(message)
 		}
 	}

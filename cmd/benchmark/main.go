@@ -32,18 +32,19 @@ const (
 )
 
 type metrics struct {
-	connected     atomic.Int64
-	peakConnected atomic.Int64
-	dialAttempted atomic.Int64
-	dialSucceeded atomic.Int64
-	dialFailed    atomic.Int64
-	sent          atomic.Int64
-	received      atomic.Int64
-	expected      atomic.Int64
-	frames        atomic.Int64
-	errors        atomic.Int64
-	ackSent       atomic.Int64
-	latency       latencyHistogram
+	connected      atomic.Int64
+	peakConnected  atomic.Int64
+	dialAttempted  atomic.Int64
+	dialSucceeded  atomic.Int64
+	dialFailed     atomic.Int64
+	sent           atomic.Int64
+	received       atomic.Int64
+	expected       atomic.Int64
+	frames         atomic.Int64
+	errors         atomic.Int64
+	ackSent        atomic.Int64
+	resyncRequired atomic.Int64
+	latency        latencyHistogram
 }
 
 var latencyBucketUpperBounds = [...]time.Duration{
@@ -482,8 +483,7 @@ func readMessages(
 	ackEvery int,
 ) {
 	defer close(done)
-	var lastContiguous uint64
-	pending := make(map[uint64]struct{})
+	var lastSeenSequence uint64
 	deliveriesSinceAck := 0
 	for {
 		_, payload, err := conn.ReadMessage()
@@ -500,6 +500,10 @@ func readMessages(
 			stats.errors.Add(1)
 			continue
 		}
+		if message.Type == "resync_required" {
+			stats.resyncRequired.Add(1)
+			continue
+		}
 		// Redis currently broadcasts persisted danmaku without a type field,
 		// so content is also accepted as the signal for a received danmaku.
 		if message.Type == "danma" || message.Content != "" {
@@ -508,23 +512,14 @@ func readMessages(
 				stats.latency.observe(time.Since(sentAt))
 			}
 			if message.RoomSeq > 0 {
-				if lastContiguous == 0 {
-					lastContiguous = message.RoomSeq
-				} else if message.RoomSeq == lastContiguous+1 {
-					lastContiguous++
-					for {
-						if _, ok := pending[lastContiguous+1]; !ok {
-							break
-						}
-						delete(pending, lastContiguous+1)
-						lastContiguous++
-					}
-				} else if message.RoomSeq > lastContiguous+1 {
-					pending[message.RoomSeq] = struct{}{}
+				// room_seq is a Kafka partition cursor. It is monotonic for one
+				// room but can contain gaps when other rooms share the partition.
+				if message.RoomSeq > lastSeenSequence {
+					lastSeenSequence = message.RoomSeq
 				}
 				deliveriesSinceAck++
 				if ackEvery > 0 && deliveriesSinceAck >= ackEvery {
-					ack := outgoingMessage{Type: "ack", RoomID: roomID, AckSeq: lastContiguous}
+					ack := outgoingMessage{Type: "ack", RoomID: roomID, AckSeq: lastSeenSequence}
 					if err := writeJSON(conn, writeMu, ack); err != nil {
 						if ctx.Err() == nil {
 							stats.errors.Add(1)
@@ -603,7 +598,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 func printFinal(stats *metrics, startedAt time.Time) {
 	duration := time.Since(startedAt)
 	log.Printf(
-		"[FINAL] duration=%s conns=%d sent=%d received=%d frames=%d expected=%d errors=%d peak_conns=%d dial_attempted=%d dial_succeeded=%d dial_failed=%d ack_sent=%d latency_samples=%d latency_p50=%s latency_p95=%s latency_p99=%s",
+		"[FINAL] duration=%s conns=%d sent=%d received=%d frames=%d expected=%d errors=%d peak_conns=%d dial_attempted=%d dial_succeeded=%d dial_failed=%d ack_sent=%d resync_required=%d latency_samples=%d latency_p50=%s latency_p95=%s latency_p99=%s",
 		duration.Round(time.Millisecond),
 		stats.connected.Load(),
 		stats.sent.Load(),
@@ -616,6 +611,7 @@ func printFinal(stats *metrics, startedAt time.Time) {
 		stats.dialSucceeded.Load(),
 		stats.dialFailed.Load(),
 		stats.ackSent.Load(),
+		stats.resyncRequired.Load(),
 		stats.latency.count.Load(),
 		stats.latency.percentile(0.50),
 		stats.latency.percentile(0.95),
