@@ -1,20 +1,20 @@
 mysql:
   user: yujun
   password: "161413"
-  host: "2402:4e00:c011:2600:3052:ef08:8c34:0"
+  host: "127.0.0.1"
   port: 3306
   dbname: live_stream
   charset: utf8mb4
 
 redis:
-  addr: "[2402:4e00:c011:2600:3052:ef08:8c34:0]:6379"
+  addr: "127.0.0.1:6379"
   password: ""
   db: 0
   username: ""
 
 kafka:
   brokers:
-    - "[2402:4e00:c011:2600:3052:ef08:8c34:0]:9092"
+    - "127.0.0.1:9092"
   group_id: "live-danmu-consumer"
   danmu_topic: "danmu_topic"
 
