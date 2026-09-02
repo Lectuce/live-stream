@@ -891,3 +891,9 @@ danmaku:
 | `internal/ws/handler.go`、`hub.go` | 新连接初始化持久化点赞数 |
 | `main.go` | 启动恢复与周期对账 |
 | `scripts/full-test.ps1`、`cmd/e2e/main.go` | 点赞幂等与限流回归 |
+
+## 18. Linux 原生全套自动化测试
+
+新增 `scripts/full-test.sh`，将 Windows PowerShell 测试流程完整映射为 Ubuntu/Linux 可直接运行的 Bash 脚本，不需要安装 `pwsh`。脚本使用 `curl` 完成 HTTP 与 Cookie Session 测试，复用 Go 的 `cmd/e2e` 和 `cmd/benchmark` 完成 WebSocket 协议、点赞幂等、限流、历史补拉及分级压测，并用 Python 3 解析 JSON 和生成报告。
+
+Linux 测试分为 `Functional`、`Smoke`、`Standard`、`Stress`、`Extreme` 五档，报告写入 `test-results/full-test-linux-*.md` 和 `test-results/full-test-linux-*.json`。完整命令见 `docs/testing/full-automated-test-guide.md`。

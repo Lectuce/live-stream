@@ -1,6 +1,9 @@
 # live-stream 全套自动化测试指南
 
-入口脚本：`scripts/full-test.ps1`
+入口脚本：
+
+- Windows：`scripts/full-test.ps1`
+- Linux：`scripts/full-test.sh`（原生 Bash，不需要 PowerShell/pwsh）
 
 该脚本依据 `docs/deep-dive/2026-09-02-live-stream-project-review.md` 建立测试矩阵，覆盖静态检查、HTTP API、Session、房间权限、WebSocket 协议、Kafka 持久化、历史分页、断线补拉、点赞状态以及分级压测。
 
@@ -11,6 +14,77 @@
 3. 后端 `server.allowed_origins` 包含测试传入的 Origin，例如 `http://localhost:5173`。
 4. 本机已安装 Go。若要检查前端，还需要 Node.js 和 npm。
 5. 测试会创建随机用户和房间，并在结束时关播；当前项目没有删除用户/房间接口，所以测试数据会保留。
+
+## Linux 单机测试
+
+Ubuntu/Linux 上不要安装 PowerShell，直接执行 Bash 版本。先确认依赖：
+
+```bash
+command -v bash curl python3 go
+curl -f http://127.0.0.1:9000/api/v1/rooms
+```
+
+第一次先跑完整功能测试，不做连接压测：
+
+```bash
+cd ~/projects/live-stream
+
+bash ./scripts/full-test.sh \
+  --base-url http://127.0.0.1:9000 \
+  --websocket-url ws://127.0.0.1:9000/api/v1/ws \
+  --origin http://localhost:5173 \
+  --diagnostics-base-url http://127.0.0.1:6060 \
+  --profile Functional \
+  --like-rate-limit 10 \
+  --skip-frontend-checks
+```
+
+功能测试通过后，依次执行烟雾、标准和压力测试：
+
+```bash
+# 100 个连接、1 个发送者
+bash ./scripts/full-test.sh \
+  --profile Smoke \
+  --max-loss-percent 0 \
+  --max-p95-latency 200ms \
+  --skip-frontend-checks
+
+# 依次测试 100×1 和 1000×10
+bash ./scripts/full-test.sh \
+  --profile Standard \
+  --max-loss-percent 0 \
+  --max-p95-latency 500ms \
+  --skip-frontend-checks
+
+# 依次测试 1000×10 和 5000×10
+bash ./scripts/full-test.sh \
+  --profile Stress \
+  --max-loss-percent 0 \
+  --skip-frontend-checks
+
+# 最后增加 10000×10，仅在专用压测环境运行
+bash ./scripts/full-test.sh \
+  --profile Extreme \
+  --max-loss-percent 0 \
+  --skip-frontend-checks
+```
+
+本机默认地址已经是 `127.0.0.1`，因此也可以简写为：
+
+```bash
+bash ./scripts/full-test.sh --profile Functional --skip-frontend-checks
+```
+
+若想直接执行脚本，可先设置一次执行权限：
+
+```bash
+chmod +x ./scripts/full-test.sh
+./scripts/full-test.sh --profile Functional --skip-frontend-checks
+```
+
+注意：命令中的 URL 必须是纯文本 URL，不能复制为 `[http://...](http://...)` 这种 Markdown 链接。
+
+## Windows / 局域网测试
 
 先做连通性检查：
 
@@ -119,10 +193,18 @@ Kafka 纯写入压测默认关闭，传入 broker 后才执行：
 - `full-test-时间.json`：适合 CI 和程序读取；
 - `full-test-时间.md`：适合人工查看和项目复盘。
 
+Linux 脚本对应生成 `full-test-linux-时间.json` 和 `full-test-linux-时间.md`。
+
 功能断言或压测阈值失败时脚本返回非零退出码。已确认但尚未修复的架构问题默认以 `WARN` 写入报告，不会中断其他测试。若希望 CI 对这些问题也失败，增加：
 
 ```powershell
 -FailOnKnownIssues
+```
+
+Linux 对应参数为：
+
+```bash
+--fail-on-known-issues
 ```
 
 ## 点赞一致性修复及回归检查
