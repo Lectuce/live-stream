@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { LogOut, Radio, Server, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -9,10 +9,14 @@ import { useAuth } from '@/components/auth-provider';
 import { AuthDialog } from '@/components/auth-dialog';
 import { ConnectionDialog } from '@/components/connection-dialog';
 
+const subscribeToHydration = () => () => {};
+
 export function AppHeader() {
   const { user, loading, logout, apiBase } = useAuth();
   const [authOpen, setAuthOpen] = useState(false);
   const [connectionOpen, setConnectionOpen] = useState(false);
+  const mounted = useSyncExternalStore(subscribeToHydration, () => true, () => false);
+
   return (
     <>
       <header className="glass sticky top-0 z-40 border-b border-white/8">
@@ -22,7 +26,7 @@ export function AppHeader() {
             <span><span className="block text-sm font-black tracking-[.16em]">LIVE NOW</span><span className="hidden text-[10px] tracking-[.18em] text-white/35 sm:block">REALTIME STAGE</span></span>
           </Link>
           <nav className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setConnectionOpen(true)} className="hidden text-white/55 hover:text-white sm:flex"><Server /> <span className="max-w-40 truncate font-mono text-[11px]">{apiBase.replace(/^https?:\/\//, '')}</span></Button>
+            <Button variant="ghost" size="sm" onClick={() => setConnectionOpen(true)} className="hidden text-white/55 hover:text-white sm:flex"><Server /> <span className="max-w-40 truncate font-mono text-[11px]">{mounted ? apiBase.replace(/^https?:\/\//, '') : '连接配置'}</span></Button>
             {!loading && user ? <div className="flex items-center gap-2"><div className="hidden items-center gap-2 rounded-full border border-white/8 bg-white/4 py-1 pl-1 pr-3 sm:flex"><Avatar size="sm"><AvatarImage src={user.avatar_url || undefined} /><AvatarFallback>{user.user_name.slice(0, 1).toUpperCase()}</AvatarFallback></Avatar><span className="text-xs text-white/70">{user.user_name}</span></div><Button variant="ghost" size="icon" onClick={() => void logout()} aria-label="退出登录"><LogOut /></Button></div> : <Button size="sm" onClick={() => setAuthOpen(true)} className="bg-white text-black hover:bg-white/85"><UserRound /> 登录</Button>}
           </nav>
         </div>

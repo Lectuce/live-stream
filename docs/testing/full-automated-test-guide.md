@@ -12,7 +12,7 @@
 1. 后端、MySQL、Redis、Kafka 已启动。
 2. Windows 能访问后端的 HTTP/WebSocket 地址。
 3. 后端 `server.allowed_origins` 包含测试传入的 Origin，例如 `http://localhost:5173`。
-4. 本机已安装 Go。若要检查前端，还需要 Node.js 和 npm。
+4. 本机已安装 Go。若要检查前端，还需要 Node.js 和 pnpm。
 5. 测试会创建随机用户和房间，并在结束时关播；当前项目没有删除用户/房间接口，所以测试数据会保留。
 
 ## Linux 单机测试
@@ -171,7 +171,7 @@ Kafka 纯写入压测默认关闭，传入 broker 后才执行：
 | 模块 | 自动检查 |
 |---|---|
 | Go 代码 | `go test ./...`、`go vet ./...` |
-| 前端 | `npm run lint`、`npm run build`（存在 `frontend/package.json` 时） |
+| 前端 | `pnpm lint`、`pnpm build`（存在 `frontend/package.json` 时） |
 | 注册 | DTO 校验、成功注册、重复邮箱、自动生成 user_id |
 | 登录与 Session | 错误密码、sid 格式、`/auth/me`、logout 后失效 |
 | 房间 | 创建、单用户单房间、mine、详情、改名、开播、关播、榜单 |

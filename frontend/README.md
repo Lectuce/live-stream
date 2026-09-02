@@ -22,6 +22,20 @@ pnpm dev
 
 浏览器打开终端显示的地址，通常为 `http://localhost:3000`。
 
+## Linux 服务器启动
+
+前后端运行在同一台 Linux 服务器时：
+
+```bash
+cd ~/projects/live-stream/frontend
+pnpm install --frozen-lockfile
+
+LIVE_STREAM_BACKEND_URL=http://127.0.0.1:9000 \
+pnpm dev --hostname 0.0.0.0 --port 3000
+```
+
+Vinext 使用 `--hostname`（不是 Vite CLI 的 `--host`）。局域网浏览器访问 `http://服务器地址:3000`，后端白名单需要包含这个 Origin。
+
 ## 连接局域网服务器
 
 例如后端位于 `172.21.15.57:9000`：

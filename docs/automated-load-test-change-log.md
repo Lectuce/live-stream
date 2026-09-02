@@ -899,3 +899,10 @@ danmaku:
 首次 Linux 实跑发现 `set -u` 下同一条 `local` 语句声明并引用 `expected` 会触发“未绑定的变量”，现已将声明和依赖赋值拆为两条语句。
 
 Linux 测试分为 `Functional`、`Smoke`、`Standard`、`Stress`、`Extreme` 五档，报告写入 `test-results/full-test-linux-*.md` 和 `test-results/full-test-linux-*.json`。完整命令见 `docs/testing/full-automated-test-guide.md`。
+
+## 19. Linux 前端启动与 Hydration 一致性
+
+- `pnpm-workspace.yaml` 补充单包工作区的 `packages: ['.']`，兼容 pnpm 9；
+- Linux Vinext 开发服务器使用 `--hostname 0.0.0.0` 对局域网监听；
+- `AppHeader` 使用 `useSyncExternalStore` 提供稳定的服务端水合快照，避免 SSR 显示 `127.0.0.1:9000`、浏览器首帧显示页面 Origin 而触发 Hydration mismatch；
+- 修改后已通过 `pnpm lint` 和 `pnpm build`。
