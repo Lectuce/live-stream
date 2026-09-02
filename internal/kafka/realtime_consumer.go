@@ -170,11 +170,7 @@ func StartRealtimeConsumer(ctx context.Context) error {
 				}
 				continue
 			}
-			payload, err := json.Marshal(event)
-			if err != nil {
-				return fmt.Errorf("marshal realtime event %s: %w", event.MessageID, err)
-			}
-			if err := publishRealtimeUntilSuccess(ctx, string(payload)); err != nil {
+			if err := publishDanmaRealtimeUntilSuccess(ctx, event); err != nil {
 				return err
 			}
 			pendingCommits = append(pendingCommits, result.message)
@@ -248,6 +244,34 @@ func publishRealtimeUntilSuccess(ctx context.Context, payload string) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(delay):
+		}
+	}
+}
+
+func publishDanmaRealtimeUntilSuccess(ctx context.Context, message model.Message) error {
+	cfg := config.GlobalConfig.Danmaku.RecentCache
+	ttl := time.Duration(cfg.TTLSeconds) * time.Second
+	startedAt := time.Now()
+	for attempt := 1; ; attempt++ {
+		err := dao.CacheAndPublishRecentDanma(
+			ctx,
+			dao.DanmuChannel,
+			message,
+			cfg.Size,
+			ttl,
+		)
+		if err == nil {
+			realtimeMetrics.redisPublish.observe(time.Since(startedAt))
+			realtimeMetrics.publishedTotal.Add(1)
+			return nil
+		}
+		if attempt == 1 || attempt%10 == 0 {
+			log.Printf("cache and publish realtime danmu failed, attempt=%d: %v", attempt, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
 		}
 	}
 }

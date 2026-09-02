@@ -97,18 +97,24 @@ room 14
 
 一次实时队列满不会立即断开：
 
-1. 丢弃本次实时投递并增加 `ws_queue_full_total`；
-2. 通过控制队列发送 `resync_required`，同一连接最多每 5 秒提示一次；
-3. 连续满 10 次或持续满 1 秒，才用关闭码 4001 断开；
-4. 客户端收到控制消息或重连后，使用最近游标补拉。
+1. 丢弃队列中最旧的实时弹幕，保留最新弹幕，增加 `ws_dropped_oldest_total`；
+2. 通过控制队列发送带精确游标的 `resync_required`，同一连接最多每 5 秒提示一次；
+3. 热门房间达到 75% 高水位时提前执行“丢旧保新”，避免排队到满才处理；
+4. 默认连续积压 100 次或持续 5 秒，才用关闭码 4001 断开；
+5. 客户端收到控制消息或重连后，使用最近游标补拉。
 
 ```json
 {
   "type": "resync_required",
   "room_id": 14,
-  "reason": "live_queue_gap"
+  "reason": "live_queue_gap",
+  "after_seq": 151,
+  "latest_seq": 158,
+  "replay_url": "/api/v1/rooms/14/messages/replay"
 }
 ```
+
+`after_seq` 是该连接最后成功写入 Socket 的游标，`latest_seq` 是触发缺口的最新事件游标。客户端从 `after_seq` 开始补拉，直到达到 `latest_seq`；补拉和实时流中的重复事件按 `message_id` 去重。
 
 ## 6. ACK 的边界
 
@@ -135,7 +141,71 @@ GET /api/v1/rooms/14/messages/replay?after_seq=150&limit=100
 
 响应按 `room_seq ASC` 返回。若 `has_more=true`，继续使用 `next_seq` 请求。补拉与实时流可能交错到达，客户端按 `message_id` 去重、按 `room_seq` 排序。
 
-## 8. 验证
+恢复接口优先读取 Redis 最近消息 ZSet；只有 `after_seq` 早于缓存窗口或 Redis 查询失败时才回源 MySQL。响应中的 `source` 为 `redis` 或 `mysql`：
+
+```json
+{
+  "data": {
+    "items": [],
+    "next_seq": 158,
+    "has_more": false,
+    "source": "redis"
+  }
+}
+```
+
+实时消费者使用一个 Lua 脚本原子完成 `ZADD + 按数量裁剪 + EXPIRE + PUBLISH`，保证客户端收到恢复提示时，对应弹幕已经进入最近消息缓存。默认每房间保留 1000 条、TTL 300 秒。
+
+## 8. 热门房间自适应
+
+Hub 按 1 秒窗口估算：
+
+```text
+预计扇出/秒 = 源弹幕/秒 × 当前本机房间连接数
+```
+
+- 在线人数达到 5000 时标记为热门房间；
+- 预计扇出不超过 150000 次/秒时仍完整推送；
+- 超过预算后计算 `sample_stride=ceil(预计扇出/预算)`，最高为 16；
+- 被采样掉的消息仍完整保存在 Kafka、Redis 最近缓存和 MySQL，只减少实时 WebSocket 扇出；
+- 模式变化通过高优先级控制队列发送 `delivery_policy`；
+- 热门房间在线人数更新由 250 ms 合并周期放宽为 1000 ms。
+
+定位纯 WebSocket 推送极限时，可以暂时把 `adaptive_sampling_enabled` 设为 `false`；业务稳定性测试应保持开启，否则超过预算后仍会继续把压力灌入慢客户端队列。
+
+当前 benchmark 也识别 `delivery_policy`：进入 sampled 后按 `poll_interval_ms` 补拉，恢复 push 时再追赶一次，并把成功补回的唯一消息计入 `recovered`。这允许自动化测试分别验证“纯推送极限”和“过载降级后最终完整交付”。
+
+```json
+{
+  "type": "system",
+  "room_id": 14,
+  "data": {
+    "sub_type": "delivery_policy",
+    "delivery_mode": "sampled",
+    "sample_stride": 3,
+    "poll_interval_ms": 1000
+  }
+}
+```
+
+浏览器参考实现位于 `web/danmaku-client.js`。它在 sampled 模式下使用随机抖动的 HTTP 补拉，恢复 push 模式后停止轮询；WebSocket 断开时指数退避重连，重连成功后从本地保存的游标补拉，并按 `message_id` 去重。
+
+```javascript
+import { DanmakuClient } from "/danmaku-client.js";
+
+const client = new DanmakuClient({
+  wsUrl: "ws://127.0.0.1:9000/api/v1/ws",
+  apiBase: "http://127.0.0.1:9000",
+  roomId: 14,
+  onDanmaku: (message) => renderDanmaku(message),
+  onMode: (mode) => console.log("delivery mode:", mode),
+});
+client.start();
+```
+
+跨域浏览器调用使用与 WebSocket 相同的 `server.allowed_origins` 白名单，并允许凭证 Cookie。正式环境应使用 HTTPS/WSS；当前登录 Cookie 带 `Secure`，普通 HTTP 只适合匿名观看或命令行压测。
+
+## 9. 验证
 
 先测纯扇出：
 
@@ -184,6 +254,10 @@ curl http://127.0.0.1:6060/debug/kafka/realtime
 - `ws_fanout_shard_duration`：单个 shard 复制客户端快照并入队的耗时；
 - `ws_client_queue_depth`：所有实时和控制队列当前积压；
 - `ws_queue_full_total`：被丢弃并要求补拉的实时投递；
+- `ws_dropped_oldest_total`：慢连接队列中被替换的旧弹幕；
+- `ws_sampled_messages_total`：热门房间自适应策略跳过的实时广播；
+- `ws_hot_rooms`：当前被判定为热门的本机房间数；
+- `ws_hot_room_policies`：热门房间的连接数、估算源 QPS、估算扇出 QPS 和采样步长；
 - `ws_resync_required_total`：发出的重同步提示；
 - `ws_slow_client_disconnect_total`：持续过载后主动断开的客户端；
 - `ws_write_errors_total`：Socket 写超时和写错误。

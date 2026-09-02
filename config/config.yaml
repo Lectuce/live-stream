@@ -21,11 +21,26 @@ kafka:
 stream_list:
   count: 20
 
+danmaku:
+  # 最近弹幕用于 WebSocket 出现缺口或重连后的快速补拉。超过该窗口时回源 MySQL。
+  recent_cache:
+    size: 1000
+    ttl_seconds: 300
+  # 热门房间仍优先实时推送；预计扇出超过预算时才按比例采样，完整数据可从缓存补拉。
+  hot_room:
+    adaptive_sampling_enabled: true
+    online_threshold: 5000
+    max_fanout_deliveries_per_second: 150000
+    max_sample_stride: 16
+    presence_interval_milliseconds: 1000
+  # 慢客户端先丢旧保新并提示补拉，持续积压才断开，避免一次瞬时抖动触发雪崩。
+  slow_client:
+    queue_high_watermark_percent: 75
+    disconnect_strikes: 100
+    disconnect_grace_milliseconds: 5000
+
 server:
   allowed_origins:
     - "http://localhost:5173"
     - "http://localhost:3000"
     - "http://benchmark.local"
-
-
-  

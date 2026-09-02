@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"live-stream/internal/dao"
 	"live-stream/internal/model"
 	"live-stream/internal/repo"
 	"log"
@@ -44,9 +45,18 @@ func ReplayDanmaHistory(ctx context.Context, roomID, afterSeq uint64, limit int)
 		limit = 500
 	}
 
-	messages, err := repo.SelectMessagesAfterSeq(ctx, roomID, afterSeq, limit+1)
-	if err != nil {
-		return nil, err
+	messages, covered, cacheErr := dao.SelectRecentDanmasAfterSeq(ctx, roomID, afterSeq, limit+1)
+	source := "redis"
+	if cacheErr != nil {
+		log.Printf("read recent danmaku cache failed, fallback to mysql: %v", cacheErr)
+	}
+	if cacheErr != nil || !covered {
+		var err error
+		messages, err = repo.SelectMessagesAfterSeq(ctx, roomID, afterSeq, limit+1)
+		if err != nil {
+			return nil, err
+		}
+		source = "mysql"
 	}
 	hasMore := len(messages) > limit
 	if hasMore {
@@ -60,5 +70,6 @@ func ReplayDanmaHistory(ctx context.Context, roomID, afterSeq uint64, limit int)
 		Items:   messages,
 		NextSeq: nextSeq,
 		HasMore: hasMore,
+		Source:  source,
 	}, nil
 }

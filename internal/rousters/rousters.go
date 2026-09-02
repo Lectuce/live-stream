@@ -9,6 +9,7 @@ import (
 )
 
 func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
+	r.Use(middleware.CORS())
 
 	apiV1Group := r.Group("/api/v1")
 	{

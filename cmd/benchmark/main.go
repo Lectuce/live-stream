@@ -44,6 +44,7 @@ type metrics struct {
 	errors         atomic.Int64
 	ackSent        atomic.Int64
 	resyncRequired atomic.Int64
+	recovered      atomic.Int64
 	latency        latencyHistogram
 }
 
@@ -102,9 +103,58 @@ func (h *latencyHistogram) percentile(percentile float64) time.Duration {
 }
 
 type incomingMessage struct {
-	Type    string `json:"type"`
-	Content string `json:"content"`
-	RoomSeq uint64 `json:"room_seq"`
+	Type      string         `json:"type"`
+	MessageID string         `json:"message_id"`
+	Content   string         `json:"content"`
+	RoomSeq   uint64         `json:"room_seq"`
+	AfterSeq  uint64         `json:"after_seq"`
+	LatestSeq uint64         `json:"latest_seq"`
+	Data      map[string]any `json:"data"`
+}
+
+type replayResponse struct {
+	Data struct {
+		Items   []incomingMessage `json:"items"`
+		NextSeq uint64            `json:"next_seq"`
+		HasMore bool              `json:"has_more"`
+	} `json:"data"`
+}
+
+type deliveryTracker struct {
+	mu      sync.Mutex
+	seen    map[string]struct{}
+	order   []string
+	lastSeq uint64
+}
+
+func newDeliveryTracker() *deliveryTracker {
+	return &deliveryTracker{seen: make(map[string]struct{}), order: make([]string, 0, 8192)}
+}
+
+func (t *deliveryTracker) observe(message incomingMessage) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if message.MessageID != "" {
+		if _, exists := t.seen[message.MessageID]; exists {
+			return false
+		}
+		t.seen[message.MessageID] = struct{}{}
+		t.order = append(t.order, message.MessageID)
+		if len(t.order) > 8192 {
+			delete(t.seen, t.order[0])
+			t.order = t.order[1:]
+		}
+	}
+	if message.RoomSeq > t.lastSeq {
+		t.lastSeq = message.RoomSeq
+	}
+	return true
+}
+
+func (t *deliveryTracker) cursor() uint64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lastSeq
 }
 
 type outgoingMessage struct {
@@ -130,6 +180,7 @@ func main() {
 	drain := flag.Duration("drain", 3*time.Second, "time to keep connections open after sending stops")
 	reportInterval := flag.Duration("report", defaultReportInterval, "metrics reporting interval")
 	ackEvery := flag.Int("ack-every", 0, "send a cumulative ACK after this many danmaku deliveries per client; 0 disables ACK")
+	replayBaseURL := flag.String("replay-base-url", "", "HTTP API base URL used for automatic gap replay; empty derives it from -urls")
 	flag.Parse()
 
 	if *clients <= 0 {
@@ -235,6 +286,7 @@ launchLoop:
 				isActiveClient(clientID, *clients, activeClientCount),
 				*sendInterval,
 				*ackEvery,
+				*replayBaseURL,
 				startSending,
 				stopSending,
 				&dialWG,
@@ -338,6 +390,7 @@ func runClient(
 	isTalker bool,
 	sendInterval time.Duration,
 	ackEvery int,
+	replayBaseURL string,
 	startSending <-chan struct{},
 	stopSending <-chan struct{},
 	dialWG *sync.WaitGroup,
@@ -377,7 +430,7 @@ func runClient(
 
 	var writeMu sync.Mutex
 	readDone := make(chan struct{})
-	go readMessages(ctx, conn, stats, readDone, &writeMu, roomID, ackEvery)
+	go readMessages(ctx, conn, stats, readDone, &writeMu, roomID, ackEvery, replayBaseURL, target)
 
 	if !isTalker {
 		select {
@@ -485,9 +538,23 @@ func readMessages(
 	writeMu *sync.Mutex,
 	roomID uint64,
 	ackEvery int,
+	replayBaseURL string,
+	webSocketTarget string,
 ) {
 	defer close(done)
-	var lastSeenSequence uint64
+	readCtx, cancelRead := context.WithCancel(ctx)
+	tracker := newDeliveryTracker()
+	var recoveryRunning atomic.Bool
+	var sampledMode atomic.Bool
+	var sampledGeneration atomic.Uint64
+	var pullCursor atomic.Uint64
+	var replayMu sync.Mutex
+	var recoveryWG sync.WaitGroup
+	defer func() {
+		cancelRead()
+		sampledMode.Store(false)
+		recoveryWG.Wait()
+	}()
 	deliveriesSinceAck := 0
 	for {
 		_, payload, err := conn.ReadMessage()
@@ -506,11 +573,111 @@ func readMessages(
 		}
 		if message.Type == "resync_required" {
 			stats.resyncRequired.Add(1)
+			if recoveryRunning.CompareAndSwap(false, true) {
+				recoveryWG.Add(1)
+				go func(afterSeq, latestSeq uint64) {
+					defer recoveryWG.Done()
+					defer recoveryRunning.Store(false)
+					replayMu.Lock()
+					_, err := recoverReplay(
+						readCtx,
+						stats,
+						tracker,
+						replayBaseURL,
+						webSocketTarget,
+						roomID,
+						afterSeq,
+						latestSeq,
+					)
+					replayMu.Unlock()
+					if err != nil && readCtx.Err() == nil {
+						log.Printf("[REPLAY ERROR] room=%d after_seq=%d: %v", roomID, afterSeq, err)
+						stats.errors.Add(1)
+					}
+				}(message.AfterSeq, message.LatestSeq)
+			}
+			continue
+		}
+		if message.Type == "system" && message.Data["sub_type"] == "delivery_policy" {
+			mode, _ := message.Data["delivery_mode"].(string)
+			if mode == "sampled" && sampledMode.CompareAndSwap(false, true) {
+				generation := sampledGeneration.Add(1)
+				cursor := tracker.cursor()
+				if cursor == 0 && message.RoomSeq > 0 {
+					cursor = message.RoomSeq
+				}
+				pullCursor.Store(cursor)
+				pollInterval := time.Second
+				if raw, ok := message.Data["poll_interval_ms"].(float64); ok && raw > 0 {
+					pollInterval = time.Duration(raw) * time.Millisecond
+				}
+				recoveryWG.Add(1)
+				go func() {
+					defer recoveryWG.Done()
+					ticker := time.NewTicker(pollInterval)
+					defer ticker.Stop()
+					for sampledMode.Load() && sampledGeneration.Load() == generation {
+						select {
+						case <-readCtx.Done():
+							return
+						case <-ticker.C:
+							replayMu.Lock()
+							next, err := recoverReplay(
+								readCtx,
+								stats,
+								tracker,
+								replayBaseURL,
+								webSocketTarget,
+								roomID,
+								pullCursor.Load(),
+								0,
+							)
+							replayMu.Unlock()
+							if next > pullCursor.Load() {
+								pullCursor.Store(next)
+							}
+							if err != nil && readCtx.Err() == nil {
+								log.Printf("[SAMPLED REPLAY ERROR] room=%d: %v", roomID, err)
+								stats.errors.Add(1)
+								return
+							}
+						}
+					}
+				}()
+			} else if mode == "push" && sampledMode.Swap(false) {
+				sampledGeneration.Add(1)
+				recoveryWG.Add(1)
+				go func(targetSeq uint64) {
+					defer recoveryWG.Done()
+					replayMu.Lock()
+					next, err := recoverReplay(
+						readCtx,
+						stats,
+						tracker,
+						replayBaseURL,
+						webSocketTarget,
+						roomID,
+						pullCursor.Load(),
+						targetSeq,
+					)
+					replayMu.Unlock()
+					if next > pullCursor.Load() {
+						pullCursor.Store(next)
+					}
+					if err != nil && readCtx.Err() == nil {
+						log.Printf("[PUSH RECOVERY ERROR] room=%d: %v", roomID, err)
+						stats.errors.Add(1)
+					}
+				}(message.RoomSeq)
+			}
 			continue
 		}
 		// Redis currently broadcasts persisted danmaku without a type field,
 		// so content is also accepted as the signal for a received danmaku.
 		if message.Type == "danma" || message.Content != "" {
+			if !tracker.observe(message) {
+				continue
+			}
 			stats.received.Add(1)
 			if sentAt, ok := benchmarkSentAt(message.Content); ok {
 				stats.latency.observe(time.Since(sentAt))
@@ -518,12 +685,9 @@ func readMessages(
 			if message.RoomSeq > 0 {
 				// room_seq is a Kafka partition cursor. It is monotonic for one
 				// room but can contain gaps when other rooms share the partition.
-				if message.RoomSeq > lastSeenSequence {
-					lastSeenSequence = message.RoomSeq
-				}
 				deliveriesSinceAck++
 				if ackEvery > 0 && deliveriesSinceAck >= ackEvery {
-					ack := outgoingMessage{Type: "ack", RoomID: roomID, AckSeq: lastSeenSequence}
+					ack := outgoingMessage{Type: "ack", RoomID: roomID, AckSeq: message.RoomSeq}
 					if err := writeJSON(conn, writeMu, ack); err != nil {
 						if ctx.Err() == nil {
 							stats.errors.Add(1)
@@ -536,6 +700,98 @@ func readMessages(
 			}
 		}
 	}
+}
+
+func recoverReplay(
+	ctx context.Context,
+	stats *metrics,
+	tracker *deliveryTracker,
+	configuredBaseURL string,
+	webSocketTarget string,
+	roomID uint64,
+	afterSeq uint64,
+	latestSeq uint64,
+) (uint64, error) {
+	baseURL, err := replayHTTPBaseURL(configuredBaseURL, webSocketTarget)
+	if err != nil {
+		return afterSeq, err
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	cursor := afterSeq
+	for page := 0; page < 100; page++ {
+		endpoint := fmt.Sprintf(
+			"%s/api/v1/rooms/%d/messages/replay?after_seq=%d&limit=500",
+			strings.TrimRight(baseURL, "/"),
+			roomID,
+			cursor,
+		)
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return cursor, err
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			return cursor, err
+		}
+		var payload replayResponse
+		decodeErr := json.NewDecoder(response.Body).Decode(&payload)
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			return cursor, fmt.Errorf("replay status %s", response.Status)
+		}
+		if decodeErr != nil {
+			return cursor, decodeErr
+		}
+		for _, message := range payload.Data.Items {
+			message.Type = "danma"
+			if !tracker.observe(message) {
+				continue
+			}
+			stats.received.Add(1)
+			stats.recovered.Add(1)
+			if sentAt, ok := benchmarkSentAt(message.Content); ok {
+				stats.latency.observe(time.Since(sentAt))
+			}
+		}
+		if payload.Data.NextSeq > cursor {
+			cursor = payload.Data.NextSeq
+		}
+		if !payload.Data.HasMore {
+			if latestSeq == 0 || cursor >= latestSeq {
+				return cursor, nil
+			}
+			select {
+			case <-ctx.Done():
+				return cursor, ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}
+	return cursor, fmt.Errorf("replay exceeded page limit")
+}
+
+func replayHTTPBaseURL(configured, webSocketTarget string) (string, error) {
+	if strings.TrimSpace(configured) != "" {
+		u, err := url.Parse(configured)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return "", fmt.Errorf("invalid replay base URL %q", configured)
+		}
+		return strings.TrimRight(configured, "/"), nil
+	}
+	u, err := url.Parse(webSocketTarget)
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("derive replay URL from %q", webSocketTarget)
+	}
+	if u.Scheme == "wss" {
+		u.Scheme = "https"
+	} else {
+		u.Scheme = "http"
+	}
+	u.Path = ""
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = ""
+	return strings.TrimRight(u.String(), "/"), nil
 }
 
 func benchmarkSentAt(content string) (time.Time, bool) {
@@ -602,7 +858,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 func printFinal(stats *metrics, startedAt time.Time) {
 	duration := time.Since(startedAt)
 	log.Printf(
-		"[FINAL] duration=%s conns=%d sent=%d received=%d frames=%d expected=%d errors=%d peak_conns=%d dial_attempted=%d dial_succeeded=%d dial_failed=%d ack_sent=%d resync_required=%d latency_samples=%d latency_p50=%s latency_p95=%s latency_p99=%s",
+		"[FINAL] duration=%s conns=%d sent=%d received=%d frames=%d expected=%d errors=%d peak_conns=%d dial_attempted=%d dial_succeeded=%d dial_failed=%d ack_sent=%d resync_required=%d recovered=%d latency_samples=%d latency_p50=%s latency_p95=%s latency_p99=%s",
 		duration.Round(time.Millisecond),
 		stats.connected.Load(),
 		stats.sent.Load(),
@@ -616,6 +872,7 @@ func printFinal(stats *metrics, startedAt time.Time) {
 		stats.dialFailed.Load(),
 		stats.ackSent.Load(),
 		stats.resyncRequired.Load(),
+		stats.recovered.Load(),
 		stats.latency.count.Load(),
 		stats.latency.percentile(0.50),
 		stats.latency.percentile(0.95),

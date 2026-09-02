@@ -46,6 +46,8 @@ type hubMetrics struct {
 	broadcastMessagesTotal    atomic.Uint64
 	deliveryEnqueuedTotal     atomic.Uint64
 	queueFullTotal            atomic.Uint64
+	droppedOldestTotal        atomic.Uint64
+	sampledMessagesTotal      atomic.Uint64
 	controlQueueFullTotal     atomic.Uint64
 	resyncRequiredTotal       atomic.Uint64
 	slowClientDisconnectTotal atomic.Uint64
@@ -68,6 +70,10 @@ type MetricsSnapshot struct {
 	BroadcastMessagesTotal    uint64                    `json:"ws_broadcast_messages_total"`
 	DeliveryEnqueuedTotal     uint64                    `json:"ws_delivery_enqueued_total"`
 	QueueFullTotal            uint64                    `json:"ws_queue_full_total"`
+	DroppedOldestTotal        uint64                    `json:"ws_dropped_oldest_total"`
+	SampledMessagesTotal      uint64                    `json:"ws_sampled_messages_total"`
+	HotRooms                  int                       `json:"ws_hot_rooms"`
+	HotRoomPolicies           []RoomPolicyMetric        `json:"ws_hot_room_policies"`
 	ControlQueueFullTotal     uint64                    `json:"ws_control_queue_full_total"`
 	ResyncRequiredTotal       uint64                    `json:"ws_resync_required_total"`
 	SlowClientDisconnectTotal uint64                    `json:"ws_slow_client_disconnect_total"`
@@ -85,11 +91,16 @@ func (h *Hub) MetricsSnapshot() MetricsSnapshot {
 	fanoutHistogram := snapshotDurationHistogram(&h.metrics.fanoutShardDuration)
 	realtimeAgeHistogram := snapshotDurationHistogram(&h.metrics.realtimeMessageAge)
 
+	hotRoomPolicies := h.hotRoomPolicies()
 	return MetricsSnapshot{
 		Connections:               h.metrics.connections.Load(),
 		BroadcastMessagesTotal:    h.metrics.broadcastMessagesTotal.Load(),
 		DeliveryEnqueuedTotal:     h.metrics.deliveryEnqueuedTotal.Load(),
 		QueueFullTotal:            h.metrics.queueFullTotal.Load(),
+		DroppedOldestTotal:        h.metrics.droppedOldestTotal.Load(),
+		SampledMessagesTotal:      h.metrics.sampledMessagesTotal.Load(),
+		HotRooms:                  len(hotRoomPolicies),
+		HotRoomPolicies:           hotRoomPolicies,
 		ControlQueueFullTotal:     h.metrics.controlQueueFullTotal.Load(),
 		ResyncRequiredTotal:       h.metrics.resyncRequiredTotal.Load(),
 		SlowClientDisconnectTotal: h.metrics.slowClientDisconnectTotal.Load(),
@@ -101,6 +112,43 @@ func (h *Hub) MetricsSnapshot() MetricsSnapshot {
 		RealtimeMessageAge:        realtimeAgeHistogram,
 		ClientQueueDepth:          h.clientQueueDepth(),
 	}
+}
+
+type RoomPolicyMetric struct {
+	RoomID       uint64  `json:"room_id"`
+	Connections  int     `json:"connections"`
+	SourceQPS    float64 `json:"source_qps"`
+	FanoutQPS    float64 `json:"fanout_qps"`
+	SampleStride int     `json:"sample_stride"`
+}
+
+func (h *Hub) hotRoomPolicies() []RoomPolicyMetric {
+	type roomEntry struct {
+		id   uint64
+		room *Room
+	}
+	h.mu.Lock()
+	rooms := make([]roomEntry, 0, len(h.rooms))
+	for roomID, room := range h.rooms {
+		rooms = append(rooms, roomEntry{id: roomID, room: room})
+	}
+	h.mu.Unlock()
+
+	policies := make([]RoomPolicyMetric, 0)
+	for _, entry := range rooms {
+		entry.room.mu.RLock()
+		if entry.room.policy.hot || len(entry.room.clients) >= h.adaptive.hotOnlineThreshold {
+			policies = append(policies, RoomPolicyMetric{
+				RoomID:       entry.id,
+				Connections:  len(entry.room.clients),
+				SourceQPS:    entry.room.policy.sourceQPS,
+				FanoutQPS:    entry.room.policy.fanoutQPS,
+				SampleStride: entry.room.policy.sampleStride,
+			})
+		}
+		entry.room.mu.RUnlock()
+	}
+	return policies
 }
 
 func snapshotDurationHistogram(histogram *durationHistogram) durationHistogramSnapshot {
@@ -157,9 +205,12 @@ func (h *Hub) metricsWorker() {
 		case <-ticker.C:
 			metrics := h.MetricsSnapshot()
 			log.Printf(
-				"ws metrics connections=%d queue_full_total=%d control_queue_full_total=%d resync_required_total=%d slow_disconnect_total=%d write_errors_total=%d closed_clients_total=%d ack_total=%d client_queue_depth=%d",
+				"ws metrics connections=%d hot_rooms=%d sampled_total=%d queue_full_total=%d dropped_oldest_total=%d control_queue_full_total=%d resync_required_total=%d slow_disconnect_total=%d write_errors_total=%d closed_clients_total=%d ack_total=%d client_queue_depth=%d",
 				metrics.Connections,
+				metrics.HotRooms,
+				metrics.SampledMessagesTotal,
 				metrics.QueueFullTotal,
+				metrics.DroppedOldestTotal,
 				metrics.ControlQueueFullTotal,
 				metrics.ResyncRequiredTotal,
 				metrics.SlowClientDisconnectTotal,

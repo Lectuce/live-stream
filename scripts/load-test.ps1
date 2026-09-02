@@ -236,7 +236,8 @@ function Invoke-Benchmark {
         "-ramp", $RampInterval,
 		"-warmup", $Warmup,
 		"-d", $Duration,
-		"-drain", $Drain
+		"-drain", $Drain,
+		"-replay-base-url", $BaseUrl
 	)
 	if ($AckEvery -gt 0) {
 		$arguments += @("-ack-every", $AckEvery.ToString())
@@ -291,7 +292,7 @@ function Invoke-Benchmark {
     }
 	$protocolMatch = [regex]::Match(
 		$finalLine,
-		"ack_sent=(?<ack>\d+) resync_required=(?<resync>\d+)"
+		"ack_sent=(?<ack>\d+) resync_required=(?<resync>\d+) recovered=(?<recovered>\d+)"
 	)
 	if (-not $protocolMatch.Success) {
 		throw "Unable to parse benchmark protocol metrics: $finalLine"
@@ -319,6 +320,7 @@ function Invoke-Benchmark {
     $dialFailed = [int64]$connectionMatch.Groups["failed"].Value
 	$ackSent = [int64]$protocolMatch.Groups["ack"].Value
 	$resyncRequired = [int64]$protocolMatch.Groups["resync"].Value
+	$recovered = [int64]$protocolMatch.Groups["recovered"].Value
 	$latencySamples = [int64]$latencyMatch.Groups["samples"].Value
 	$latencyP50 = $latencyMatch.Groups["p50"].Value
 	$latencyP95 = $latencyMatch.Groups["p95"].Value
@@ -362,6 +364,7 @@ function Invoke-Benchmark {
         DialFailed      = $dialFailed
 		AckSent         = $ackSent
 		ResyncRequired  = $resyncRequired
+		Recovered       = $recovered
 		LatencySamples  = $latencySamples
 		LatencyP50      = $latencyP50
 		LatencyP95      = $latencyP95
@@ -541,6 +544,7 @@ Write-Host "Missing deliveries: $($benchmarkResult.Missing)"
 Write-Host "Loss: $($benchmarkResult.LossPercent.ToString('0.######', [System.Globalization.CultureInfo]::InvariantCulture))%"
 Write-Host "ACK sent: $($benchmarkResult.AckSent)"
 Write-Host "Resync required: $($benchmarkResult.ResyncRequired)"
+Write-Host "Recovered by replay: $($benchmarkResult.Recovered)"
 Write-Host "Latency samples: $($benchmarkResult.LatencySamples)"
 Write-Host "Latency P50/P95/P99: $($benchmarkResult.LatencyP50) / $($benchmarkResult.LatencyP95) / $($benchmarkResult.LatencyP99)"
 Write-Host "History matches: $historyCount"

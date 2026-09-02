@@ -15,14 +15,12 @@ import (
 )
 
 const (
-	writeWait            = 10 * time.Second
-	pongWait             = 60 * time.Second
-	pingPeriod           = pongWait * 9 / 10
-	clientQueueSize      = 256
-	controlQueueSize     = 8
-	queueFullStrikeLimit = 10
-	queueFullGrace       = time.Second
-	gapNoticeInterval    = 5 * time.Second
+	writeWait         = 10 * time.Second
+	pongWait          = 60 * time.Second
+	pingPeriod        = pongWait * 9 / 10
+	clientQueueSize   = 256
+	controlQueueSize  = 8
+	gapNoticeInterval = 5 * time.Second
 )
 
 var nextConnectionID atomic.Uint64
@@ -33,13 +31,19 @@ const (
 	enqueueOK enqueueResult = iota
 	enqueueClosed
 	enqueueFull
+	enqueueDroppedOldest
 )
+
+type outboundFrame struct {
+	message *websocket.PreparedMessage
+	roomSeq uint64
+}
 
 type Client struct {
 	hub          *Hub
 	conn         *websocket.Conn
 	RoomID       uint64                          // 当前客户端所在的房间
-	send         chan *websocket.PreparedMessage // 下发给前端的消息队列
+	send         chan outboundFrame              // 下发给前端的消息队列
 	control      chan *websocket.PreparedMessage // accepted/error/resync 等高优先级控制消息
 	state        chan *websocket.PreparedMessage // 在线人数等可覆盖的最新状态
 	UserID       uint64                          // 当前客户端的用户id
@@ -56,6 +60,7 @@ type Client struct {
 	queueFullStreak atomic.Uint32
 	queueFullSince  atomic.Int64
 	lastGapNotice   atomic.Int64
+	lastWrittenSeq  atomic.Uint64
 }
 
 func NewClient(hub *Hub, conn *websocket.Conn, roomID uint64, userID uint64, userName string) *Client {
@@ -68,27 +73,57 @@ func NewClient(hub *Hub, conn *websocket.Conn, roomID uint64, userID uint64, use
 		UserName:     userName,
 		connectionID: connectionID,
 		fanoutShard:  int(connectionID % fanoutShardCount),
-		send:         make(chan *websocket.PreparedMessage, clientQueueSize),
+		send:         make(chan outboundFrame, clientQueueSize),
 		control:      make(chan *websocket.PreparedMessage, controlQueueSize),
 		state:        make(chan *websocket.PreparedMessage, 1),
 	}
 }
 
-func (c *Client) trySend(message *websocket.PreparedMessage) enqueueResult {
-	c.sendMu.RLock()
-	defer c.sendMu.RUnlock()
+func (c *Client) trySendData(
+	message *websocket.PreparedMessage,
+	roomSeq uint64,
+	preferLatest bool,
+	highWatermark int,
+) enqueueResult {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
 	if c.sendClosed {
 		return enqueueClosed
 	}
+	frame := outboundFrame{message: message, roomSeq: roomSeq}
+	if preferLatest && highWatermark > 0 && len(c.send) >= highWatermark {
+		select {
+		case <-c.send:
+		default:
+		}
+		select {
+		case c.send <- frame:
+			return enqueueDroppedOldest
+		default:
+			return enqueueFull
+		}
+	}
 	select {
-	case c.send <- message:
-		if c.queueFullStreak.Load() != 0 {
+	case c.send <- frame:
+		if len(c.send) < cap(c.send)/2 && c.queueFullStreak.Load() != 0 {
 			c.queueFullStreak.Store(0)
 			c.queueFullSince.Store(0)
 		}
 		return enqueueOK
 	default:
-		return enqueueFull
+		// The queue contains stale realtime events. Drop the oldest one so the
+		// client remains close to live, then ask it to replay the missing range.
+		select {
+		case <-c.send:
+		default:
+			return enqueueFull
+		}
+		select {
+		case c.send <- frame:
+			return enqueueDroppedOldest
+		default:
+			return enqueueFull
+		}
 	}
 }
 
@@ -129,7 +164,11 @@ func (c *Client) replaceState(message *websocket.PreparedMessage) enqueueResult 
 // recordQueueFull distinguishes a short burst from a persistently slow
 // connection. The first dropped live event emits one resync hint; only a
 // sustained high-water mark closes the socket.
-func (c *Client) recordQueueFull(now time.Time) (notifyGap, disconnect bool) {
+func (c *Client) recordQueuePressure(
+	now time.Time,
+	strikeLimit uint32,
+	grace time.Duration,
+) (notifyGap, disconnect bool) {
 	nowNanos := now.UnixNano()
 	if c.queueFullSince.Load() == 0 {
 		c.queueFullSince.CompareAndSwap(0, nowNanos)
@@ -146,7 +185,7 @@ func (c *Client) recordQueueFull(now time.Time) (notifyGap, disconnect bool) {
 		}
 	}
 	since := c.queueFullSince.Load()
-	disconnect = streak >= queueFullStrikeLimit || (since > 0 && nowNanos-since >= int64(queueFullGrace))
+	disconnect = streak >= strikeLimit || (since > 0 && nowNanos-since >= int64(grace))
 	return notifyGap, disconnect
 }
 
@@ -351,16 +390,19 @@ func (c *Client) writePump() {
 				}
 				return
 			}
-		case message, ok := <-dataChannel:
+		case frame, ok := <-dataChannel:
 			if !ok {
 				dataChannel = nil
 				continue
 			}
-			if !writePrepared(message) {
+			if !writePrepared(frame.message) {
 				if !c.isClosing() {
 					c.hub.metrics.writeErrorsTotal.Add(1)
 				}
 				return
+			}
+			if frame.roomSeq > 0 {
+				c.lastWrittenSeq.Store(frame.roomSeq)
 			}
 		case message, ok := <-stateChannel:
 			if !ok {

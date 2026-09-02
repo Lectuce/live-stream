@@ -173,17 +173,17 @@ func TestTrySendDistinguishesFullAndClosed(t *testing.T) {
 	}
 
 	for i := 0; i < cap(client.send); i++ {
-		if result := client.trySend(data); result != enqueueOK {
+		if result := client.trySendData(data, 0, false, cap(client.send)); result != enqueueOK {
 			t.Fatalf("trySend() = %v before queue was full", result)
 		}
 	}
-	if result := client.trySend(data); result != enqueueFull {
-		t.Fatalf("trySend() = %v, want enqueueFull", result)
+	if result := client.trySendData(data, 0, false, cap(client.send)); result != enqueueDroppedOldest {
+		t.Fatalf("trySendData() = %v, want enqueueDroppedOldest", result)
 	}
 
 	closedClient := NewClient(hub, nil, 1, 2, "tester")
 	closedClient.closeSend()
-	if result := closedClient.trySend(data); result != enqueueClosed {
+	if result := closedClient.trySendData(data, 0, false, cap(closedClient.send)); result != enqueueClosed {
 		t.Fatalf("trySend() = %v, want enqueueClosed", result)
 	}
 }
@@ -198,7 +198,7 @@ func TestBroadcastReusesSerializedPayload(t *testing.T) {
 	hub.broadcastToRoom(&Message{RoomID: 1, Type: "danma", Content: "hello"})
 	firstPayload := <-first.send
 	secondPayload := <-second.send
-	if firstPayload == nil || secondPayload == nil || firstPayload != secondPayload {
+	if firstPayload.message == nil || secondPayload.message == nil || firstPayload.message != secondPayload.message {
 		t.Fatal("broadcast created a different serialized payload for each client")
 	}
 	if got := hub.metrics.deliveryEnqueuedTotal.Load(); got != 2 {
@@ -215,7 +215,7 @@ func TestQueueFullAllowsBurstThenClosesPersistentSlowClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < cap(client.send); i++ {
-		client.send <- data
+		client.send <- outboundFrame{message: data}
 	}
 
 	hub.broadcastToRoom(&Message{RoomID: 1, Type: "danma", Content: "overflow"})
@@ -232,7 +232,7 @@ func TestQueueFullAllowsBurstThenClosesPersistentSlowClient(t *testing.T) {
 		t.Fatalf("resync required total = %d, want 1", got)
 	}
 
-	for i := 1; i < queueFullStrikeLimit; i++ {
+	for i := 1; i < int(hub.adaptive.slowStrikeLimit); i++ {
 		hub.broadcastToRoom(&Message{RoomID: 1, Type: "danma", Content: "persistent-overflow"})
 	}
 	if !client.isClosing() {
@@ -301,12 +301,14 @@ func TestShardedBroadcastPreservesPerClientFIFO(t *testing.T) {
 	for index, client := range clients {
 		var first, second *websocket.PreparedMessage
 		select {
-		case first = <-client.send:
+		case frame := <-client.send:
+			first = frame.message
 		case <-time.After(time.Second):
 			t.Fatalf("client %d did not receive first frame", index)
 		}
 		select {
-		case second = <-client.send:
+		case frame := <-client.send:
+			second = frame.message
 		case <-time.After(time.Second):
 			t.Fatalf("client %d did not receive second frame", index)
 		}
@@ -358,5 +360,54 @@ func TestClientAcknowledgementOnlyMovesForward(t *testing.T) {
 	client.acknowledge(11)
 	if got := client.lastAck.Load(); got != 11 {
 		t.Fatalf("last ack = %d, want 11", got)
+	}
+}
+
+func TestHotRoomPolicySamplesOnlyAfterFanoutBudgetIsExceeded(t *testing.T) {
+	hub := newHub(4)
+	hub.adaptive.hotOnlineThreshold = 1000
+	hub.adaptive.maxFanoutPerSecond = 10
+	hub.adaptive.maxSampleStride = 16
+	for i := 0; i < 10; i++ {
+		hub.handleRegister(NewClient(hub, nil, 7, uint64(i+1), "tester"))
+	}
+
+	startedAt := time.Now()
+	deliver, policy := hub.planDanmaDelivery(Message{RoomID: 7, RoomSeq: 1}, startedAt)
+	if !deliver || policy != nil {
+		t.Fatalf("first event deliver=%v policy=%+v, want full push without transition", deliver, policy)
+	}
+	deliver, policy = hub.planDanmaDelivery(
+		Message{RoomID: 7, RoomSeq: 2},
+		startedAt.Add(500*time.Millisecond),
+	)
+	if policy == nil || policy.sampleStride <= 1 || !policy.hot {
+		t.Fatalf("fanout overload did not enter sampled hot mode: %+v", policy)
+	}
+	if deliver {
+		t.Fatal("sampled event unexpectedly selected for delivery")
+	}
+}
+
+func TestHotRoomDropsOldestAtHighWatermark(t *testing.T) {
+	hub := newHub(1)
+	hub.adaptive.queueHighWatermark = 2
+	client := NewClient(hub, nil, 9, 1, "tester")
+	hub.handleRegister(client)
+	frame, err := websocket.NewPreparedMessage(websocket.TextMessage, []byte(`{"type":"danma"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.send <- outboundFrame{message: frame, roomSeq: 1}
+	client.send <- outboundFrame{message: frame, roomSeq: 2}
+
+	result := client.trySendData(frame, 3, true, hub.adaptive.queueHighWatermark)
+	if result != enqueueDroppedOldest {
+		t.Fatalf("trySendData()=%v, want enqueueDroppedOldest", result)
+	}
+	first := <-client.send
+	second := <-client.send
+	if first.roomSeq != 2 || second.roomSeq != 3 {
+		t.Fatalf("queue sequences=%d,%d, want 2,3", first.roomSeq, second.roomSeq)
 	}
 }

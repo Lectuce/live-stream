@@ -82,3 +82,31 @@ func TestLatencyHistogramPercentiles(t *testing.T) {
 		t.Fatalf("p99 = %s, want %s", got, time.Second)
 	}
 }
+
+func TestDeliveryTrackerDeduplicatesReplayAndLive(t *testing.T) {
+	tracker := newDeliveryTracker()
+	message := incomingMessage{MessageID: "same", RoomSeq: 42}
+	if !tracker.observe(message) {
+		t.Fatal("first delivery was treated as duplicate")
+	}
+	if tracker.observe(message) {
+		t.Fatal("duplicate delivery was counted again")
+	}
+}
+
+func TestReplayHTTPBaseURL(t *testing.T) {
+	got, err := replayHTTPBaseURL("", "wss://example.com/api/v1/ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "https://example.com" {
+		t.Fatalf("derived base URL=%q", got)
+	}
+	got, err = replayHTTPBaseURL("http://127.0.0.1:9000/", "ws://unused")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "http://127.0.0.1:9000" {
+		t.Fatalf("configured base URL=%q", got)
+	}
+}

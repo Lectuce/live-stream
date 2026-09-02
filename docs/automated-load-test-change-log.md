@@ -788,6 +788,31 @@ go test -race ./internal/ws ./cmd/benchmark
 .\scripts\load-test.ps1 -Connections 1000 -ActiveClients 10 -MaxLossPercent 0
 ```
 
+## 16. 慢客户端、热门房间和推拉降级
+
+本轮新增以下能力：
+
+- 实时队列由“本次消息直接丢弃”改为“丢最旧、保最新”；热门房间达到队列高水位即提前替换旧消息；
+- `resync_required` 携带连接最后成功写出的 `after_seq`、触发缺口的 `latest_seq` 和补拉地址；
+- 慢连接默认连续积压 100 次或持续 5 秒才断开，相关阈值进入 `config.yaml`；
+- Redis 最近消息缓存使用 ZSet，实时 Consumer 用 Lua 原子完成缓存、裁剪、TTL 和 Pub/Sub；
+- replay 接口在缓存能够覆盖游标时直接读取 Redis，超出窗口再回源 MySQL；
+- Hub 以在线人数和预计 fan-out QPS 判定热门房间，超过预算时启用可配置采样；
+- 新连接会立即收到房间当前 `delivery_policy`，模式切换走高优先级控制队列；
+- benchmark 收到 `resync_required` 后自动调用 HTTP replay；收到 sampled 策略后按服务端间隔轮询，恢复 push 时完成最后一次追赶，并按 `message_id` 去重计数；
+- 新增 `web/danmaku-client.js`，实现浏览器端断线重连、补拉、去重、sampled 模式轮询；
+- HTTP API 增加与 WebSocket 相同 Origin 白名单的凭证化 CORS 支持。
+
+新增指标：
+
+```text
+ws_hot_rooms
+ws_sampled_messages_total
+ws_dropped_oldest_total
+```
+
+注意：采样是过载降级，不是零丢失推送。完整消息仍位于 Kafka、Redis 最近缓存和 MySQL；客户端是否把补拉消息重新展示到弹幕轨道，应根据消息时效决定。
+
 ### 13.9 本轮修改文件清单
 
 | 文件 | 修改内容 |
