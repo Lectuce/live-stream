@@ -13,6 +13,12 @@ type DanmakuConfig struct {
 	RecentCache RecentCacheConfig `yaml:"recent_cache" mapstructure:"recent_cache"`
 	HotRoom     HotRoomConfig     `yaml:"hot_room" mapstructure:"hot_room"`
 	SlowClient  SlowClientConfig  `yaml:"slow_client" mapstructure:"slow_client"`
+	Like        LikeConfig        `yaml:"like" mapstructure:"like"`
+}
+
+type LikeConfig struct {
+	MaxPerSecond             int `yaml:"max_per_second" mapstructure:"max_per_second"`
+	ReconcileIntervalSeconds int `yaml:"reconcile_interval_seconds" mapstructure:"reconcile_interval_seconds"`
 }
 
 type RecentCacheConfig struct {

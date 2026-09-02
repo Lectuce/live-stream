@@ -1,6 +1,8 @@
 package ws
 
 import (
+	"live-stream/internal/config"
+	"live-stream/internal/dao"
 	"live-stream/internal/kafka"
 	"live-stream/internal/model"
 	"log"
@@ -40,16 +42,17 @@ type outboundFrame struct {
 }
 
 type Client struct {
-	hub          *Hub
-	conn         *websocket.Conn
-	RoomID       uint64                          // 当前客户端所在的房间
-	send         chan outboundFrame              // 下发给前端的消息队列
-	control      chan *websocket.PreparedMessage // accepted/error/resync 等高优先级控制消息
-	state        chan *websocket.PreparedMessage // 在线人数等可覆盖的最新状态
-	UserID       uint64                          // 当前客户端的用户id
-	UserName     string
-	connectionID uint64
-	fanoutShard  int
+	hub              *Hub
+	conn             *websocket.Conn
+	RoomID           uint64                          // 当前客户端所在的房间
+	send             chan outboundFrame              // 下发给前端的消息队列
+	control          chan *websocket.PreparedMessage // accepted/error/resync 等高优先级控制消息
+	state            chan *websocket.PreparedMessage // 在线人数等可覆盖的最新状态
+	UserID           uint64                          // 当前客户端的用户id
+	UserName         string
+	initialLikeCount int64
+	connectionID     uint64
+	fanoutShard      int
 
 	sendMu          sync.RWMutex
 	sendClosed      bool
@@ -63,19 +66,31 @@ type Client struct {
 	lastWrittenSeq  atomic.Uint64
 }
 
-func NewClient(hub *Hub, conn *websocket.Conn, roomID uint64, userID uint64, userName string) *Client {
+func NewClient(
+	hub *Hub,
+	conn *websocket.Conn,
+	roomID uint64,
+	userID uint64,
+	userName string,
+	initialLikeCount ...int64,
+) *Client {
 	connectionID := nextConnectionID.Add(1)
+	likeCount := int64(0)
+	if len(initialLikeCount) > 0 {
+		likeCount = initialLikeCount[0]
+	}
 	return &Client{
-		hub:          hub,
-		conn:         conn,
-		RoomID:       roomID,
-		UserID:       userID,
-		UserName:     userName,
-		connectionID: connectionID,
-		fanoutShard:  int(connectionID % fanoutShardCount),
-		send:         make(chan outboundFrame, clientQueueSize),
-		control:      make(chan *websocket.PreparedMessage, controlQueueSize),
-		state:        make(chan *websocket.PreparedMessage, 1),
+		hub:              hub,
+		conn:             conn,
+		RoomID:           roomID,
+		UserID:           userID,
+		UserName:         userName,
+		initialLikeCount: likeCount,
+		connectionID:     connectionID,
+		fanoutShard:      int(connectionID % fanoutShardCount),
+		send:             make(chan outboundFrame, clientQueueSize),
+		control:          make(chan *websocket.PreparedMessage, controlQueueSize),
+		state:            make(chan *websocket.PreparedMessage, 1),
 	}
 }
 
@@ -289,13 +304,19 @@ func (c *Client) readPump() {
 
 		if msg.MessageID == "" {
 			msg.MessageID = uuid.NewString()
-		} else if _, parseErr := uuid.Parse(msg.MessageID); parseErr != nil {
-			c.hub.enqueueJSON(c, map[string]interface{}{
-				"type": "error",
-				"code": http.StatusBadRequest,
-				"msg":  "message_id 必须是 UUID",
-			})
-			continue
+		} else {
+			parsedMessageID, parseErr := uuid.Parse(msg.MessageID)
+			if parseErr != nil {
+				c.hub.enqueueJSON(c, map[string]interface{}{
+					"type": "error",
+					"code": http.StatusBadRequest,
+					"msg":  "message_id 必须是 UUID",
+				})
+				continue
+			}
+			// Canonicalize equivalent UUID spellings so they cannot bypass the
+			// durable message_id uniqueness constraint.
+			msg.MessageID = parsedMessageID.String()
 		}
 		msg.UserID = c.UserID
 		msg.RoomID = c.RoomID
@@ -303,6 +324,31 @@ func (c *Client) readPump() {
 
 		if msg.Type == "" {
 			msg.Type = model.MsgTypeDanma
+		}
+		if msg.Type == model.MsgTypeLike {
+			maxPerSecond := 10
+			if config.GlobalConfig != nil && config.GlobalConfig.Danmaku.Like.MaxPerSecond > 0 {
+				maxPerSecond = config.GlobalConfig.Danmaku.Like.MaxPerSecond
+			}
+			allowed, limitErr := dao.AllowRoomLike(c.hub.ctx, c.RoomID, c.UserID, maxPerSecond)
+			if limitErr != nil {
+				c.hub.enqueueJSON(c, map[string]interface{}{
+					"type":       "error",
+					"code":       http.StatusServiceUnavailable,
+					"message_id": msg.MessageID,
+					"msg":        "点赞服务暂时不可用",
+				})
+				continue
+			}
+			if !allowed {
+				c.hub.enqueueJSON(c, map[string]interface{}{
+					"type":       "error",
+					"code":       http.StatusTooManyRequests,
+					"message_id": msg.MessageID,
+					"msg":        "点赞过于频繁，请稍后再试",
+				})
+				continue
+			}
 		}
 
 		err = kafka.SendDanmaMsg(c.hub.ctx, msg)

@@ -20,4 +20,10 @@ func TestLoadConfigDecodesDanmakuPolicies(t *testing.T) {
 	if cfg.Danmaku.SlowClient.DisconnectStrikes != 100 {
 		t.Fatalf("slow-client strikes=%d", cfg.Danmaku.SlowClient.DisconnectStrikes)
 	}
+	if cfg.Danmaku.Like.MaxPerSecond != 10 {
+		t.Fatalf("like max per second=%d", cfg.Danmaku.Like.MaxPerSecond)
+	}
+	if cfg.Danmaku.Like.ReconcileIntervalSeconds != 30 {
+		t.Fatalf("like reconcile interval=%d", cfg.Danmaku.Like.ReconcileIntervalSeconds)
+	}
 }

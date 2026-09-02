@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"live-stream/internal/auth"
+	"live-stream/internal/config"
 	"live-stream/internal/middleware"
 	"live-stream/internal/model"
 	"live-stream/internal/service"
@@ -68,14 +69,14 @@ func LoginHandler(c *gin.Context) {
 		})
 		return
 	}
-	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetSameSite(sessionSameSite())
 	c.SetCookie(
 		"sid",
 		tokenStr,
 		7*24*3600,
 		"/",
 		"",
-		true, // 本地测试为false
+		config.GlobalConfig.Server.CookieSecure,
 		true,
 	)
 
@@ -101,10 +102,42 @@ func LogOut(c *gin.Context) {
 		return
 	}
 
-	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("sid", "", -1, "/", "", true, true)
+	c.SetSameSite(sessionSameSite())
+	c.SetCookie("sid", "", -1, "/", "", config.GlobalConfig.Server.CookieSecure, true)
 	c.JSON(http.StatusOK, gin.H{
 		"message": "登出成功",
+	})
+}
+
+func sessionSameSite() http.SameSite {
+	if config.GlobalConfig == nil {
+		return http.SameSiteLaxMode
+	}
+	switch config.GlobalConfig.Server.CookieSameSite {
+	case "none":
+		return http.SameSiteNoneMode
+	case "strict":
+		return http.SameSiteStrictMode
+	default:
+		return http.SameSiteLaxMode
+	}
+}
+
+func GetMyRoom(c *gin.Context) {
+	uid, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "未登录"})
+		return
+	}
+	room, err := service.GetRoomByOwnerID(c.Request.Context(), uid)
+	if err != nil {
+		log.Printf("get my room failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询房间失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data":    room,
+		"message": "查询房间成功",
 	})
 }
 

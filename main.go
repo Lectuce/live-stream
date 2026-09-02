@@ -26,6 +26,12 @@ func main() {
 
 	dao.Initdb()
 	dao.InitRedis()
+	reconciledRooms, err := dao.ReconcileRoomLikeCounts(ctx, true)
+	if err != nil {
+		log.Fatalf("restore room like counts failed: %v", err)
+	}
+	log.Printf("room like counts restored, rooms=%d", reconciledRooms)
+	go startLikeCountReconciler(ctx)
 	if err := kafka.InitKafkaProducer(); err != nil {
 		log.Fatalf("kafka producer init failed: %v", err)
 	}
@@ -91,6 +97,25 @@ func main() {
 	// 等待gin服务退出
 	<-serverExit
 	log.Println("service exited")
+}
+
+func startLikeCountReconciler(ctx context.Context) {
+	intervalSeconds := 30
+	if config.GlobalConfig != nil && config.GlobalConfig.Danmaku.Like.ReconcileIntervalSeconds > 0 {
+		intervalSeconds = config.GlobalConfig.Danmaku.Like.ReconcileIntervalSeconds
+	}
+	ticker := time.NewTicker(time.Duration(intervalSeconds) * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := dao.ReconcileRoomLikeCounts(ctx, false); err != nil {
+				log.Printf("reconcile room like counts failed: %v", err)
+			}
+		}
+	}
 }
 
 func startDiagnosticsServer(hub *ws.Hub) *http.Server {

@@ -55,6 +55,10 @@ func ListRooms(c context.Context) ([]model.HotRoomDTO, error) {
 	return rooms, nil
 }
 
+func GetRoomByOwnerID(ctx context.Context, ownerID uint64) (*model.Room, error) {
+	return repo.SelectRoomByOwnerID(ctx, ownerID)
+}
+
 func RoomDetail(c context.Context, roomID uint64) (*model.RoomDetail, error) {
 	detail, err := repo.SelectRoomDetail(c, roomID)
 	if err != nil {

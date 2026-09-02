@@ -11,7 +11,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-
 func checkOrigin(r *http.Request) bool {
 	if config.GlobalConfig == nil {
 		return false
@@ -86,7 +85,7 @@ func ServeWs(hub *Hub, c *gin.Context) {
 		return
 	}
 
-	client := NewClient(hub, conn, rid, uid, uname)
+	client := NewClient(hub, conn, rid, uid, uname, room.LikeCount)
 	client.hub.register <- client
 	go client.writePump()
 	go client.readPump()

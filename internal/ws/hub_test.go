@@ -164,6 +164,20 @@ func TestLikeUpdateBroadcastsCombinedLatestRoomState(t *testing.T) {
 	}
 }
 
+func TestRegisterInitializesLikeCountFromDurableRoomState(t *testing.T) {
+	hub := newHub(1)
+	client := NewClient(hub, nil, 7, 1, "tester", 99)
+	hub.handleRegister(client)
+
+	room := hub.rooms[7]
+	room.mu.RLock()
+	likeCount := room.likeCount
+	room.mu.RUnlock()
+	if likeCount != 99 {
+		t.Fatalf("initial room like count=%d, want 99", likeCount)
+	}
+}
+
 func TestTrySendDistinguishesFullAndClosed(t *testing.T) {
 	hub := newHub(1)
 	client := NewClient(hub, nil, 1, 1, "tester")

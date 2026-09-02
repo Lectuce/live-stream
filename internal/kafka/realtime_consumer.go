@@ -8,6 +8,7 @@ import (
 	"live-stream/internal/config"
 	"live-stream/internal/dao"
 	"live-stream/internal/model"
+	"live-stream/internal/repo"
 	"log"
 	"time"
 
@@ -19,10 +20,10 @@ const (
 	realtimeCommitWait  = 200 * time.Millisecond
 )
 
-// StartRealtimeConsumer keeps MySQL completely outside the live broadcast
-// path. Kafka is the durable hand-off; Redis publication is retried before the
-// realtime consumer offset is committed. A crash after Publish and before
-// Commit can duplicate an event, which clients remove by message_id.
+// StartRealtimeConsumer keeps MySQL outside the danmaku broadcast path. Likes
+// are the exception: their durable message_id record and rooms.like_count are
+// committed atomically before Redis is updated, so Kafka replay cannot count a
+// logical click twice and Redis can always be rebuilt from MySQL.
 func StartRealtimeConsumer(ctx context.Context) error {
 	cfg := config.GlobalConfig.Kafka
 	groupID := cfg.GroupID + "-realtime"
@@ -143,7 +144,7 @@ func StartRealtimeConsumer(ctx context.Context) error {
 			// Likes are aggregated in Redis and emitted as a replaceable state
 			// update. They must not create one room-wide event per click.
 			if event.Type == model.MsgTypeLike {
-				count, err := incrementLikeUntilSuccess(ctx, event.RoomID)
+				count, err := applyLikeUntilSuccess(ctx, event)
 				if err != nil {
 					return err
 				}
@@ -184,14 +185,23 @@ func StartRealtimeConsumer(ctx context.Context) error {
 	}
 }
 
-func incrementLikeUntilSuccess(ctx context.Context, roomID uint64) (int64, error) {
+func applyLikeUntilSuccess(ctx context.Context, event model.Message) (int64, error) {
 	for attempt := 1; ; attempt++ {
-		count, err := dao.IncrRoomLikeCount(ctx, roomID)
+		count, _, err := repo.ApplyLikeEvent(ctx, event)
+		if err == nil {
+			err = dao.SetRoomLikeCount(ctx, event.RoomID, count)
+		}
 		if err == nil {
 			return count, nil
 		}
 		if attempt == 1 || attempt%10 == 0 {
-			log.Printf("increment room likes failed, room=%d attempt=%d: %v", roomID, attempt, err)
+			log.Printf(
+				"apply room like failed, room=%d message_id=%s attempt=%d: %v",
+				event.RoomID,
+				event.MessageID,
+				attempt,
+				err,
+			)
 		}
 		select {
 		case <-ctx.Done():

@@ -166,6 +166,7 @@ func (h *Hub) handleRegister(client *Client) {
 		room = &Room{
 			clients:     make(map[*Client]bool),
 			onlineUsers: make(map[uint64]uint64),
+			likeCount:   client.initialLikeCount,
 		}
 		for shard := range room.shards {
 			room.shards[shard] = make(map[*Client]bool)

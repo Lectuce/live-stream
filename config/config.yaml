@@ -38,8 +38,17 @@ danmaku:
     queue_high_watermark_percent: 75
     disconnect_strikes: 100
     disconnect_grace_milliseconds: 5000
+  # 用户可以连续点赞，但限制单个用户对单个房间的瞬时频率。
+  like:
+    max_per_second: 10
+    # MySQL 是点赞真相源，定期恢复 Redis 镜像，覆盖 Redis 重启/清空场景。
+    reconcile_interval_seconds: 30
 
 server:
+  # 本地/LAN 使用 HTTP 时为 false；HTTPS 生产环境改为 true。
+  cookie_secure: false
+  # 前后端同站点或本地开发使用 lax；跨站 HTTPS 部署可改为 none。
+  cookie_same_site: "lax"
   allowed_origins:
     - "http://localhost:5173"
     - "http://localhost:3000"

@@ -48,6 +48,10 @@ func LoadConfig() *model.Config {
 	v.SetDefault("danmaku.slow_client.queue_high_watermark_percent", 75)
 	v.SetDefault("danmaku.slow_client.disconnect_strikes", 100)
 	v.SetDefault("danmaku.slow_client.disconnect_grace_milliseconds", 5000)
+	v.SetDefault("danmaku.like.max_per_second", 10)
+	v.SetDefault("danmaku.like.reconcile_interval_seconds", 30)
+	v.SetDefault("server.cookie_secure", false)
+	v.SetDefault("server.cookie_same_site", "lax")
 	err := v.ReadInConfig()
 	if err != nil {
 		panic(fmt.Errorf("fatal error config file: %w", err))

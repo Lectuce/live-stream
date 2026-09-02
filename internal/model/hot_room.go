@@ -6,5 +6,5 @@ type HotRoomDTO struct {
 	OwnerID       int64  `json:"owner_id"`
 	OwnerUsername string `json:"owner_username"`
 	PlayURL       string `json:"play_url"`
-	PraiseCount   int64  `json:"praise_count"`
+	LikeCount     int64  `json:"like_count"`
 }

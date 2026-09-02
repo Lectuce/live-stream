@@ -40,6 +40,9 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 			rooms.GET("", func(c *gin.Context) {
 				handler.ListRoom(c)
 			})
+			rooms.GET("/mine", middleware.Auth, func(c *gin.Context) {
+				handler.GetMyRoom(c)
+			})
 			rooms.GET("/:room_id", func(c *gin.Context) {
 				handler.GetRoomDetail(c)
 			})

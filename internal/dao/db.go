@@ -50,6 +50,9 @@ func Initdb() {
 	if err := db.AutoMigrate(&model.Danma{}); err != nil {
 		panic(fmt.Errorf("Database table Danma migration failed: %v", err))
 	}
+	if err := db.AutoMigrate(&model.LikeEvent{}); err != nil {
+		panic(fmt.Errorf("Database table LikeEvent migration failed: %v", err))
+	}
 	if err := migrateDanmaSequences(db); err != nil {
 		panic(fmt.Errorf("Database danma sequence migration failed: %v", err))
 	}

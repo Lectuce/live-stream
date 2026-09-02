@@ -129,7 +129,7 @@ func SelectAllRoomsByLikes(ctx context.Context, limit int) ([]model.HotRoomDTO, 
 }
 
 func SelectRoomDetail(ctx context.Context, roomID uint64) (model.RoomDetail, error) {
-	sql := `SELECT room.room_title, room.owner_id, room.start_at, room.status, u.user_name as owner_username, room.like_count
+	sql := `SELECT room.room_id, room.room_title, room.owner_id, room.start_at, room.status, u.user_name as owner_username, room.like_count
 			FROM rooms room
 			LEFT JOIN users u ON  u.user_id= room.owner_id
 			WHERE room.room_id = ?

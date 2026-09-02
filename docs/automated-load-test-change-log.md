@@ -830,3 +830,64 @@ ws_dropped_oldest_total
 | `main.go` | 本机 pprof/指标服务及 HTTP 优雅退出 |
 | `docs/load-testing-guide.md` | 严格损失、延迟指标、服务指标和 pprof 使用说明 |
 | `docs/automated-load-test-change-log.md` | 本节修改记录 |
+
+## 17. 点赞持久幂等、榜单一致性与 Redis 恢复
+
+本轮保留“同一用户可以连续点赞”的直播产品语义，但将“不同 message_id 是不同点赞、同一 message_id 只能计数一次”落实为持久化约束。
+
+### 17.1 持久幂等
+
+新增 `like_events` 表，`message_id` 为主键。实时点赞消费者在同一个 MySQL 事务中：
+
+1. 幂等插入点赞事件；
+2. 仅首次插入时执行 `rooms.like_count = like_count + 1`；
+3. 返回当前权威点赞数。
+
+如果消费者在数据库成功后、Redis 更新或 Kafka offset 提交前退出，重新消费相同消息时事件插入是成功的空操作，不会再次增加计数。
+
+### 17.2 Redis 镜像与恢复
+
+MySQL 的 `rooms.like_count` 现在是权威数据，Redis `room:like:<room_id>` 是实时镜像：
+
+- 每次幂等事务成功后立即更新 Redis；
+- 服务启动时恢复所有房间点赞数；
+- 首次升级会保留比 MySQL 更大的旧 Redis 计数，避免直接丢弃历史点赞；
+- 之后按配置周期从 MySQL 修复缺失或落后的 Redis Key；
+- 新 WebSocket 房间从 MySQL 房间记录初始化 like_count，因此 Redis 刚丢失时也不会向新观众显示 0。
+
+恢复 Lua 不会用旧 MySQL 快照覆盖更大的 Redis 值，避免与并发点赞产生回退竞态。
+
+### 17.3 频率限制
+
+新增单用户、单房间固定窗口限流，默认每秒最多 10 次。超过阈值返回 WebSocket error 429。配置：
+
+```yaml
+danmaku:
+  like:
+    max_per_second: 10
+    reconcile_interval_seconds: 30
+```
+
+### 17.4 自动化回归
+
+`scripts/full-test.ps1` 与 `cmd/e2e` 现在检查：
+
+- 相同点赞 message_id 重放后计数不增加；
+- rooms.like_count 能反映 WebSocket 已观察到的点赞；
+- 源码存在持久幂等事务和 Redis 恢复路径；
+- 超过配置频率的点赞返回 429；
+- MySQL 中相同弹幕 message_id 仍只保存一条。
+
+本轮涉及文件：
+
+| 文件 | 修改内容 |
+|---|---|
+| `internal/model/like_event.go` | 点赞幂等事件模型 |
+| `internal/dao/db.go` | 自动迁移 like_events |
+| `internal/repo/like.go` | 事件去重与房间计数原子事务 |
+| `internal/kafka/realtime_consumer.go` | 点赞持久化、Redis 镜像、提交顺序 |
+| `internal/dao/redis.go` | 点赞限流及 MySQL→Redis 恢复 |
+| `internal/ws/client.go` | 点赞频率限制 |
+| `internal/ws/handler.go`、`hub.go` | 新连接初始化持久化点赞数 |
+| `main.go` | 启动恢复与周期对账 |
+| `scripts/full-test.ps1`、`cmd/e2e/main.go` | 点赞幂等与限流回归 |

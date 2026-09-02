@@ -3,3 +3,4 @@ live-stream
 .idea/
 .vscode/
 .env
+/test-results/

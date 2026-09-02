@@ -1,0 +1,74 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --font-sans: 'Inter', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  --radius-sm: 0.45rem;
+  --radius-md: 0.65rem;
+  --radius-lg: 0.85rem;
+  --radius-xl: 1rem;
+}
+
+:root {
+  color-scheme: dark;
+  --background: #080a0f;
+  --foreground: #f3f5f7;
+  --card: #0f1219;
+  --card-foreground: #f3f5f7;
+  --popover: #11151d;
+  --popover-foreground: #f3f5f7;
+  --primary: #ff4d3d;
+  --primary-foreground: #fff;
+  --secondary: #1b202a;
+  --secondary-foreground: #f3f5f7;
+  --muted: #171b23;
+  --muted-foreground: #9299a6;
+  --accent: #ff4d3d;
+  --accent-foreground: #fff;
+  --destructive: #ff5d66;
+  --border: rgb(255 255 255 / 9%);
+  --input: rgb(255 255 255 / 12%);
+  --ring: rgb(255 77 61 / 55%);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply min-h-screen bg-background text-foreground antialiased;
+    background-image: radial-gradient(circle at 8% -10%, rgb(255 77 61 / 12%), transparent 28rem), radial-gradient(circle at 92% 4%, rgb(83 118 255 / 8%), transparent 25rem);
+  }
+  html { @apply bg-background font-sans; scroll-behavior: smooth; }
+  ::selection { background: rgb(255 77 61 / 35%); }
+}
+
+@keyframes live-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.8); } }
+@keyframes danmaku-fly { from { transform: translateX(105%); } to { transform: translateX(calc(-100vw - 100%)); } }
+.live-dot { animation: live-pulse 1.45s ease-in-out infinite; }
+.danmaku-fly { animation: danmaku-fly var(--fly-duration, 10s) linear forwards; }
+.glass { background: rgb(12 15 21 / 78%); backdrop-filter: blur(18px); }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; } }
