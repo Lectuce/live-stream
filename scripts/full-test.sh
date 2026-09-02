@@ -337,7 +337,8 @@ run_go_helper() {
 }
 
 test_handshake_status() {
-  local expected=$1 name=$2 output_file="$TMP_DIR/handshake-$expected.log"
+  local expected=$1 name=$2
+  local output_file="$TMP_DIR/handshake-$expected.log"
   run_go_helper "$output_file" \
     -ws-url "$WEBSOCKET_URL" -origin "$ORIGIN" -room "$ROOM_ID" \
     -expect-handshake-status "$expected" -timeout 10s

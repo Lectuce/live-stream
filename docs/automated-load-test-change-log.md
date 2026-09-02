@@ -896,4 +896,6 @@ danmaku:
 
 新增 `scripts/full-test.sh`，将 Windows PowerShell 测试流程完整映射为 Ubuntu/Linux 可直接运行的 Bash 脚本，不需要安装 `pwsh`。脚本使用 `curl` 完成 HTTP 与 Cookie Session 测试，复用 Go 的 `cmd/e2e` 和 `cmd/benchmark` 完成 WebSocket 协议、点赞幂等、限流、历史补拉及分级压测，并用 Python 3 解析 JSON 和生成报告。
 
+首次 Linux 实跑发现 `set -u` 下同一条 `local` 语句声明并引用 `expected` 会触发“未绑定的变量”，现已将声明和依赖赋值拆为两条语句。
+
 Linux 测试分为 `Functional`、`Smoke`、`Standard`、`Stress`、`Extreme` 五档，报告写入 `test-results/full-test-linux-*.md` 和 `test-results/full-test-linux-*.json`。完整命令见 `docs/testing/full-automated-test-guide.md`。
