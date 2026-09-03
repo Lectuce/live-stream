@@ -5,6 +5,7 @@ import (
 	"errors"
 	"live-stream/internal/config"
 	"live-stream/internal/dao"
+	"live-stream/internal/hotrank"
 	"live-stream/internal/kafka"
 	"live-stream/internal/rousters"
 	"live-stream/internal/ws"
@@ -39,6 +40,9 @@ func main() {
 	defer kafka.Close()
 	hub := ws.NewHub()
 	go hub.Run()
+	if config.GlobalConfig.Danmaku.HotRanking.Enabled {
+		go hotrank.New(hub).Run(ctx)
+	}
 	diagnosticsServer := startDiagnosticsServer(hub)
 	go func() {
 		if err := ws.StartRedisSubscriber(ctx, hub); err != nil {

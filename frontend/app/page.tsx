@@ -29,7 +29,7 @@ export default function Home() {
   const filtered = useMemo(() => rooms.filter((room) => `${room.room_title} ${room.owner_username || ''}`.toLowerCase().includes(query.toLowerCase())), [query, rooms]);
   const totalLikes = rooms.reduce((sum, room) => sum + (room.like_count ?? room.praise_count ?? 0), 0);
   const metrics: Array<{ label: string; value: string | number; Icon: LucideIcon }> = [
-    { label: '在线直播', value: rooms.length, Icon: Radio }, { label: '累计热度', value: totalLikes, Icon: Flame },
+    { label: '在线直播', value: rooms.length, Icon: Radio }, { label: '累计点赞', value: totalLikes, Icon: Flame },
     { label: '实时推送', value: 'WebSocket', Icon: Sparkles }, { label: '恢复协议', value: 'room_seq', Icon: RefreshCw },
   ];
 

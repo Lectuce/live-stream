@@ -33,6 +33,19 @@ danmaku:
     max_fanout_deliveries_per_second: 150000
     max_sample_stride: 16
     presence_interval_milliseconds: 1000
+  # like_count 是历史累计展示值；以下实时信号只用于 Redis 热度榜。
+  # 权重是未经业务实验校准的初始配置，使用对数压缩防止单项量级支配排序。
+  hot_ranking:
+    enabled: true
+    refresh_interval_milliseconds: 3000
+    metric_bucket_ttl_seconds: 180
+    presence_ttl_seconds: 10
+    max_like_contributions_per_user_minute: 10
+    online_weight: 3.0
+    like_weight: 2.0
+    danma_weight: 1.0
+    freshness_weight: 1.0
+    freshness_decay_minutes: 30.0
   # 慢客户端先丢旧保新并提示补拉，持续积压才断开，避免一次瞬时抖动触发雪崩。
   slow_client:
     queue_high_watermark_percent: 75

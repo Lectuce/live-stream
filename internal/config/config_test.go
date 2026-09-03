@@ -17,6 +17,13 @@ func TestLoadConfigDecodesDanmakuPolicies(t *testing.T) {
 	if cfg.Danmaku.HotRoom.MaxFanoutDeliveriesPerSecond != 150000 {
 		t.Fatalf("fanout budget=%d", cfg.Danmaku.HotRoom.MaxFanoutDeliveriesPerSecond)
 	}
+	if !cfg.Danmaku.HotRanking.Enabled || cfg.Danmaku.HotRanking.RefreshIntervalMilliseconds != 3000 {
+		t.Fatalf("unexpected hot ranking config: %+v", cfg.Danmaku.HotRanking)
+	}
+	if cfg.Danmaku.HotRanking.OnlineWeight != 3 || cfg.Danmaku.HotRanking.LikeWeight != 2 ||
+		cfg.Danmaku.HotRanking.DanmaWeight != 1 || cfg.Danmaku.HotRanking.FreshnessDecayMinutes != 30 {
+		t.Fatalf("unexpected hot ranking weights: %+v", cfg.Danmaku.HotRanking)
+	}
 	if cfg.Danmaku.SlowClient.DisconnectStrikes != 100 {
 		t.Fatalf("slow-client strikes=%d", cfg.Danmaku.SlowClient.DisconnectStrikes)
 	}

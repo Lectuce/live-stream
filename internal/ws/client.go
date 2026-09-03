@@ -328,6 +328,9 @@ func (c *Client) readPump() {
 		var likeIdentity dao.RoomLikeIdentity
 		likeReserved := false
 		likeAcceptedTTL := 24 * time.Hour
+		hotMetricTTL := 3 * time.Minute
+		hotLikeContributionLimit := 10
+		hotRankingEnabled := false
 		if msg.Type == model.MsgTypeLike {
 			maxPerSecond := 10
 			pendingTTL := time.Minute
@@ -341,6 +344,14 @@ func (c *Client) readPump() {
 				}
 				if likeConfig.IdempotencyTTLSeconds > 0 {
 					likeAcceptedTTL = time.Duration(likeConfig.IdempotencyTTLSeconds) * time.Second
+				}
+				hotConfig := config.GlobalConfig.Danmaku.HotRanking
+				hotRankingEnabled = hotConfig.Enabled
+				if hotConfig.MetricBucketTTLSeconds > 0 {
+					hotMetricTTL = time.Duration(hotConfig.MetricBucketTTLSeconds) * time.Second
+				}
+				if hotConfig.MaxLikeContributionsPerUserMinute > 0 {
+					hotLikeContributionLimit = hotConfig.MaxLikeContributionsPerUserMinute
 				}
 			}
 			likeIdentity = dao.RoomLikeIdentity{
@@ -416,7 +427,20 @@ func (c *Client) readPump() {
 			continue
 		}
 		if likeReserved {
-			if confirmErr := dao.ConfirmRoomLike(c.hub.ctx, likeIdentity, likeAcceptedTTL); confirmErr != nil {
+			var confirmErr error
+			if hotRankingEnabled {
+				_, confirmErr = dao.ConfirmRoomLikeAndRecordHotContribution(
+					c.hub.ctx,
+					likeIdentity,
+					likeAcceptedTTL,
+					hotMetricTTL,
+					hotLikeContributionLimit,
+					time.Now(),
+				)
+			} else {
+				confirmErr = dao.ConfirmRoomLike(c.hub.ctx, likeIdentity, likeAcceptedTTL)
+			}
+			if confirmErr != nil {
 				// Kafka is already the durable handoff. The consumer repairs this
 				// Redis marker after the aggregate commits, so do not report the
 				// accepted Kafka write as a failed click.

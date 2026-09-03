@@ -79,6 +79,26 @@ func (h *Hub) Stop() {
 	h.cancel()
 }
 
+// SnapshotOnlineCounts returns this gateway's current connection count for
+// every locally active room. The hot-ranking worker publishes the snapshot as
+// a short-lived per-instance presence heartbeat in Redis.
+func (h *Hub) SnapshotOnlineCounts() map[uint64]int {
+	h.mu.Lock()
+	rooms := make(map[uint64]*Room, len(h.rooms))
+	for roomID, room := range h.rooms {
+		rooms[roomID] = room
+	}
+	h.mu.Unlock()
+
+	counts := make(map[uint64]int, len(rooms))
+	for roomID, room := range rooms {
+		room.mu.RLock()
+		counts[roomID] = len(room.clients)
+		room.mu.RUnlock()
+	}
+	return counts
+}
+
 func (h *Hub) broadcastWorker(queue <-chan fanoutJob) {
 	for {
 		select {

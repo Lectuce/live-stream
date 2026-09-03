@@ -184,6 +184,7 @@ Kafka 纯写入压测默认关闭，传入 broker 后才执行：
 | 历史 | limit、has_more、游标分页、无效参数 |
 | 补拉 | `after_seq`、递增 room_seq、Redis/MySQL source |
 | 点赞 | accepted、实时 room_state、重复 message_id 行为 |
+| 热度榜 | 公式与时间衰减、分钟桶近似、Redis 排名顺序、按开播时间降级的源码回归 |
 | 压测 | 建连成功率、峰值连接、发送/投递、丢失率、P50/P95/P99、历史落库 |
 
 ## 报告与退出码
@@ -217,5 +218,7 @@ Linux 对应参数为：
 4. 启动时会保留旧 Redis 较大值并迁回 MySQL，此后每隔配置周期从 MySQL 重建 Redis；Redis 重启或清空后能够恢复。
 
 用户仍然可以连续点赞，但单个用户对单个房间默认限制为每秒 10 次。不同 `message_id` 是不同的点赞；相同 `message_id` 在配置的 Redis 幂等窗口内只会进入 Kafka 一次。Kafka 自身的消费重放由 MySQL checkpoint 永久吸收。
+
+房间排序与累计点赞已经解耦：`like_count` 只用于展示，`hot_score` 使用 Redis 的近期点赞、近期弹幕、全局在线连接和开播时间衰减计算。同一用户每分钟默认最多贡献 10 次热度点赞；Redis 榜单不可用时接口按 `start_at DESC, room_id DESC` 降级。源码审计会阻止列表接口重新退回 `like_count DESC`。
 
 脚本不会自动停止 Redis/Kafka/MySQL 来做故障注入，因为这会影响共享环境并可能破坏数据。服务重启、Redis 清空、Kafka 重放、MySQL 故障等测试应在独立 Docker 测试栈中另行执行。

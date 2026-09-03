@@ -47,7 +47,7 @@ func ListRooms(c context.Context) ([]model.HotRoomDTO, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	rooms, err := repo.SelectAllRoomsByLikes(c, limit)
+	rooms, err := repo.SelectRankedRooms(c, limit)
 	if err != nil {
 		log.Printf("list rooms failed: %v", err)
 		return nil, err

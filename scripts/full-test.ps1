@@ -363,15 +363,24 @@ function Invoke-StaticReliabilityAudit {
             "like_batches and the Kafka partition checkpoint advance in the same MySQL transaction."
     }
 
-    $rankingReadsMySQL = $roomRepo -match "ORDER BY room\.like_count DESC"
+	$rankingUsesHotScore = $roomRepo -match "ReadHotRoomRanking" -and
+		$roomRepo -match "ORDER BY room\.start_at DESC"
     $writesRoomLikeCount = $likeRepo -match 'UpdateColumn\("like_count"' -and
 		$likeRepo -match 'gorm\.Expr\("like_count \+ \?"'
-    if ($rankingReadsMySQL -and -not $writesRoomLikeCount) {
-        Add-KnownIssue "Redis likes are not written back to rooms.like_count" `
-            "Room ranking reads rooms.like_count from MySQL, while the realtime like consumer contains no MySQL write-back."
+	if (-not $rankingUsesHotScore) {
+		Add-KnownIssue "Room ranking still depends on historical likes" `
+			"Redis hot-score ordering with start-time fallback was not detected."
     }
     else {
-        Add-Check "Like count write-back for ranking" PASS
+		Add-Check "Realtime hot room ranking" PASS `
+			"Room order comes from the Redis hot-score ZSet and degrades to start_at ordering."
+	}
+	if (-not $writesRoomLikeCount) {
+		Add-KnownIssue "Historical likes are not durably accumulated" `
+			"The aggregate like consumer does not update rooms.like_count."
+	}
+	else {
+		Add-Check "Historical like accumulation" PASS
     }
 
     $hasRecovery = $redis -match "func ReconcileRoomLikeCounts" -and

@@ -493,11 +493,16 @@ if grep -q 'applyLikeBatchesUntilSuccess' internal/kafka/realtime_consumer.go \
 else
   known_issue "Like increment can repeat after restart" "Aggregate Kafka checkpoint path was not detected."
 fi
-if grep -q 'UpdateColumn("like_count"' internal/repo/like.go \
-  && grep -q 'ORDER BY room.like_count DESC' internal/repo/room.go; then
-  pass "Like count write-back for ranking" "rooms.like_count is updated transactionally"
+if grep -q 'ReadHotRoomRanking' internal/repo/room.go \
+  && grep -q 'ORDER BY room.start_at DESC' internal/repo/room.go; then
+  pass "Realtime hot room ranking" "Redis hot score with start-time fallback"
 else
-  known_issue "Like ranking count is stale" "MySQL room counter update was not detected."
+  known_issue "Room ranking still depends on historical likes" "Redis hot score path was not detected."
+fi
+if grep -q 'UpdateColumn("like_count"' internal/repo/like.go; then
+  pass "Historical like accumulation" "rooms.like_count is updated by aggregate transactions"
+else
+  known_issue "Historical likes are not durable" "MySQL room counter update was not detected."
 fi
 if grep -q 'func ReconcileRoomLikeCounts' internal/dao/redis.go \
   && grep -q 'restoreRoomLikeCountScript.Run' internal/dao/redis.go; then

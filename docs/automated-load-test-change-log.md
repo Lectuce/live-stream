@@ -955,3 +955,20 @@ kafka_realtime_like_batch_persist_duration
 | `internal/ws/client.go` | 点赞入口幂等和限流 |
 | `internal/kafka/metrics.go` | 聚合批次数、事件数和事务延迟指标 |
 | `scripts/full-test.ps1`、`scripts/full-test.sh` | 聚合 checkpoint 静态回归审计 |
+
+## 21. 历史点赞与实时热度解耦
+
+房间列表不再使用 `rooms.like_count DESC`。累计点赞继续作为 MySQL 权威展示值，新增 Redis `rooms:hot` ZSet 承担秒级房间排序：
+
+- 弹幕缓存/发布 Lua 同时递增房间分钟桶，不增加一次独立 Redis 往返；
+- Kafka 确认点赞后，在确认 message_id 的同一个 Lua 中记录热度贡献；
+- 历史累计点赞保留全部有效点击，排名贡献默认限制为同一用户每分钟 10 次；
+- 当前分钟桶与前一分钟桶按时间重叠比例组合，近似最近 60 秒点赞和弹幕速率；
+- 每个网关实例上报房间在线数及短期心跳，计算时剔除过期实例并汇总全局连接数；
+- 后台任务默认每 3 秒使用对数压缩、近期互动和开播衰减计算 hot_score，并原子替换 ZSet；
+- 列表读取 Redis 排名后批量查询 MySQL，榜单缺失或 Redis 故障时按 `start_at DESC, room_id DESC` 降级；
+- 首页继续展示历史累计点赞，但文案由“累计热度”改为“累计点赞”。
+
+热度公式的权重全部位于 `danmaku.hot_ranking` 配置，属于未经线上实验校准的初始值。`hot_score` 是可重建的近实时信号，允许少量误差；`like_count` 仍通过 Kafka 聚合事务和 MySQL checkpoint 保证消费重放不重复累计。
+
+新增单元测试覆盖热度公式、开播时间衰减、分钟桶近似、无效 Redis 数值以及 Redis 排名顺序重组。

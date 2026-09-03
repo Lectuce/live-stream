@@ -14,13 +14,20 @@ import (
 const recentDanmaKeyPrefix = "room:recent:"
 
 var cacheAndPublishRecentDanmaScript = redis.NewScript(`
-redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
-local count = redis.call('ZCARD', KEYS[1])
 local max_items = tonumber(ARGV[3])
-if count > max_items then
-  redis.call('ZREMRANGEBYRANK', KEYS[1], 0, count - max_items - 1)
+local added = 1
+if max_items > 0 then
+  added = redis.call('ZADD', KEYS[1], 'NX', ARGV[1], ARGV[2])
+  local count = redis.call('ZCARD', KEYS[1])
+  if count > max_items then
+    redis.call('ZREMRANGEBYRANK', KEYS[1], 0, count - max_items - 1)
+  end
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[4]))
 end
-redis.call('EXPIRE', KEYS[1], tonumber(ARGV[4]))
+if tonumber(ARGV[6]) > 0 and added == 1 then
+  redis.call('INCR', KEYS[2])
+  redis.call('EXPIRE', KEYS[2], tonumber(ARGV[6]))
+end
 return redis.call('PUBLISH', ARGV[5], ARGV[2])
 `)
 
@@ -37,14 +44,8 @@ func CacheAndPublishRecentDanma(
 	message model.Message,
 	maxItems int,
 	ttl time.Duration,
+	hotMetricTTL time.Duration,
 ) error {
-	if maxItems <= 0 {
-		payload, err := json.Marshal(message)
-		if err != nil {
-			return fmt.Errorf("marshal realtime danmaku: %w", err)
-		}
-		return Publish(ctx, channel, string(payload))
-	}
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
@@ -52,18 +53,22 @@ func CacheAndPublishRecentDanma(
 	if err != nil {
 		return fmt.Errorf("marshal recent danmaku: %w", err)
 	}
-	if message.RoomSeq == 0 {
+	if maxItems > 0 && message.RoomSeq == 0 {
 		return fmt.Errorf("cache recent danmaku without room_seq")
 	}
 	return cacheAndPublishRecentDanmaScript.Run(
 		ctx,
 		SC.Redis,
-		[]string{recentDanmaKey(message.RoomID)},
+		[]string{
+			recentDanmaKey(message.RoomID),
+			hotMetricMinuteKey("danmas", message.RoomID, time.Now().Unix()/60),
+		},
 		message.RoomSeq,
 		string(payload),
 		maxItems,
 		int64(ttl/time.Second),
 		channel,
+		int64(hotMetricTTL/time.Second),
 	).Err()
 }
 

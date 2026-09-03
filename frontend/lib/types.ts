@@ -19,6 +19,7 @@ export interface Room {
   updated_at?: string;
   start_at?: string | null;
   like_count?: number;
+  hot_score?: number;
   praise_count?: number;
   play_url?: string;
 }

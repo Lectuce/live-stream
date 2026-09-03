@@ -378,6 +378,13 @@ func publishRealtimeUntilSuccess(ctx context.Context, payload string) error {
 func publishDanmaRealtimeUntilSuccess(ctx context.Context, message model.Message) error {
 	cfg := config.GlobalConfig.Danmaku.RecentCache
 	ttl := time.Duration(cfg.TTLSeconds) * time.Second
+	hotMetricTTL := time.Duration(0)
+	if config.GlobalConfig.Danmaku.HotRanking.Enabled {
+		hotMetricTTL = time.Duration(config.GlobalConfig.Danmaku.HotRanking.MetricBucketTTLSeconds) * time.Second
+		if hotMetricTTL <= 0 {
+			hotMetricTTL = 3 * time.Minute
+		}
+	}
 	startedAt := time.Now()
 	for attempt := 1; ; attempt++ {
 		err := dao.CacheAndPublishRecentDanma(
@@ -386,6 +393,7 @@ func publishDanmaRealtimeUntilSuccess(ctx context.Context, message model.Message
 			message,
 			cfg.Size,
 			ttl,
+			hotMetricTTL,
 		)
 		if err == nil {
 			realtimeMetrics.redisPublish.observe(time.Since(startedAt))
