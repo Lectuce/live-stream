@@ -121,7 +121,7 @@ Kafka 后面拆成两个 Consumer Group：实时组先把弹幕通过 Lua 原子
 - 多 Broker、多副本、Redis Cluster、MySQL 高可用。
 - 服务发现、Kubernetes、灰度发布、Prometheus/Grafana 告警。
 - 全局在线人数、跨节点一致的热房判断和全局房间状态。
-- 点赞持久化和严格幂等。
+- 点赞单次点击的永久审计；当前客户端重试去重采用 Redis TTL，MySQL 只保存聚合批次和消费 checkpoint。
 
 ## 5. 架构：四层业务面 + 事件驱动实时面
 
@@ -374,17 +374,17 @@ Hub 估算：
 ### 8.8 点赞
 
 1. 登录连接发 type=like。
-2. 同样先写 Kafka。
-3. 实时组在一个 MySQL 事务中插入 like_events(message_id) 并更新 rooms.like_count。
-4. message_id 已存在时事务返回当前计数，不重复加一；因此 Kafka 重放是幂等的。
-5. MySQL 成功后将权威计数镜像到 Redis，同一房间在约 200ms 内只保留最新 count。
-6. 以 system/like_count 状态更新发布到 Pub/Sub。
+2. Redis Lua 原子预留 message_id 并执行单用户/单房间限流，然后同步写 Kafka。
+3. 实时组累计 100 条或等待 200ms，按 Kafka 分区和房间聚合 delta。
+4. MySQL 事务内写一条 like_batches、执行 rooms.like_count += delta，并推进分区 checkpoint。
+5. checkpoint 跳过已处理 offset，因此 Kafka 重放即使形成了不同批次边界也不会重复计数。
+6. MySQL 成功后将权威计数镜像到 Redis，再发布 system/like_count，最后提交 Kafka offset。
 7. Hub 与在线人数合并成 room_state，用容量 1 的状态队列覆盖旧值。
 8. Redis 启动和运行期间定期从 MySQL 恢复；单用户单房间默认每秒最多点赞 10 次。
 
 已修复的历史边界：
 
-- message_id 通过 like_events 主键持久化去重，计数与事件记录处于同一事务。
+- Kafka 重放通过 MySQL 分区 checkpoint 持久去重；客户端 message_id 重试通过 Redis TTL 去重。
 - rooms.like_count 现在是权威计数，榜单与详情能读取最新持久化值。
 - Redis 是可重建镜像，启动时兼容旧 Redis 计数，之后定期按 MySQL 对账恢复。
 
@@ -394,7 +394,7 @@ Hub 估算：
 
 如果一个消费者先落 MySQL 再发 Redis，MySQL 抖动会直接增加直播延迟。两个 Group 各维护独立 offset：
 
-- 实时组的弹幕路径只依赖 Redis；点赞为了持久幂等会先完成一个短 MySQL 事务。
+- 实时组的弹幕路径只依赖 Redis；点赞按 100 条/200ms 聚合后完成一个短 MySQL 事务。
 - 持久化组只依赖 MySQL，目标是历史耐久。
 
 代价是两条链路只有最终一致性，观众已看到但历史接口短时间查不到属于允许状态。
@@ -557,7 +557,7 @@ Lua 在 Redis 单线程执行上下文中把四步原子化，使“可恢复记
 | 观众看到但历史没有 | persistence Group Lag、MySQL 慢查询 | 持久化链路 |
 | Kafka Lag=0 但客户端缺 | ws 队列与压测机资源 | Kafka 完成不代表 Socket 完成 |
 | Redis 补拉大量回 MySQL | 最近窗口命中率、TTL、persistence Lag | 窗口太小或持久化太慢 |
-| 榜单点赞不变 | Redis like 与 rooms.like_count | 当前实现未回写 MySQL |
+| 榜单点赞长时间不变 | realtime like batch 指标、checkpoint、rooms.like_count | 聚合事务失败或消费 Lag 过高 |
 
 ### 11.3 已发生过的典型问题
 
@@ -657,8 +657,9 @@ Lua 在 Redis 单线程执行上下文中把四步原子化，使“可恢复记
 
 点赞：
 
-- 当前虽然也有 message_id，但 Redis INCR 没有幂等记录。
-- 应使用 Lua：若 SETNX like:event:{message_id} 成功才 INCR，并设置去重窗口 TTL；或者先写 durable like_events，再异步聚合。
+- 入口 Lua 先预留 message_id，Kafka 确认后转为带 TTL 的 accepted 标记，吸收客户端重试。
+- Kafka 消费幂等不依赖这个临时标记，而由 MySQL 分区 checkpoint 保证；聚合事务同时更新 like_batches、rooms.like_count 和 last_offset。
+- 代价是 MySQL 不再永久保存每次点击的 message_id；如需长期逐点击审计，应把 Kafka 原始事件下沉到分析存储。
 
 ### 12.6 推拉结合
 
@@ -677,7 +678,7 @@ Lua 在 Redis 单线程执行上下文中把四步原子化，使“可恢复记
 
 1. 消息缺少类型白名单、content 长度/空值校验和 WebSocket ReadLimit；超大或非法消息可能先实时广播，再让 MySQL 持久化永久重试。
 2. Redis Subscriber 和后台 Consumer 退出后没有 supervisor 自愈，只写日志。
-3. 点赞不幂等、不持久化，与房间榜单数据源不一致。
+3. 点赞的客户端 message_id 去重只有 Redis TTL；Redis 丢失后再次生产同一逻辑点击仍可能重复计数。
 4. room_seq 绑定 partition offset，Kafka 扩分区会破坏单调性。
 5. 一人一房只靠先查后插，缺少 owner_id 唯一索引。
 6. 优雅退出没有等待 Hub、Subscriber 和两个 Consumer 完成；HTTP Shutdown 也不会自动关闭已 Hijack 的 WebSocket。
@@ -754,7 +755,7 @@ Lua 在 Redis 单线程执行上下文中把四步原子化，使“可恢复记
 17. 后台任务 supervisor、readiness、告警和优雅退出等待。
 18. 限流、消息校验、审核、禁言和风控。
 19. Kafka/Redis/MySQL 高可用与凭据管理。
-20. 点赞幂等聚合和热榜数据一致性。
+20. 将点赞原始事件下沉分析存储，并把单节点 Redis 限流升级为可观测的风控服务。
 
 ## 16. 测试核验结果
 
@@ -784,7 +785,7 @@ Lua 在 Redis 单线程执行上下文中把四步原子化，使“可恢复记
 - Kafka/Redis/MySQL 都是本地开发级单点配置。
 - Pub/Sub 不是可靠队列；完整性来自 Kafka、最近缓存、历史库和客户端恢复的组合，但仍有静默缺口。
 - room_seq 方案不支持无痛扩 Kafka 分区。
-- 点赞链路和热榜尚未闭环。
+- 点赞累计值与热榜已闭环，但逐点击永久审计和 Redis 去重窗口之外的逻辑幂等没有实现。
 - 项目没有真实业务指标，只能讲工程指标。
 
 ### 17.3 如果重来一次

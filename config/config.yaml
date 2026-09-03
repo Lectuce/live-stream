@@ -41,6 +41,13 @@ danmaku:
   # 用户可以连续点赞，但限制单个用户对单个房间的瞬时频率。
   like:
     max_per_second: 10
+    # 点赞按房间聚合后批量持久化；任一条件满足即刷新。
+    batch_size: 100
+    batch_wait_milliseconds: 200
+    # message_id 在 Redis 中承担客户端重试去重；pending 使用较短租约，
+    # Kafka 已确认后延长为完整幂等窗口。
+    idempotency_ttl_seconds: 86400
+    reservation_ttl_seconds: 60
     # MySQL 是点赞真相源，定期恢复 Redis 镜像，覆盖 Redis 重启/清空场景。
     reconcile_interval_seconds: 30
 

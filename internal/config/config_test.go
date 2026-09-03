@@ -26,4 +26,10 @@ func TestLoadConfigDecodesDanmakuPolicies(t *testing.T) {
 	if cfg.Danmaku.Like.ReconcileIntervalSeconds != 30 {
 		t.Fatalf("like reconcile interval=%d", cfg.Danmaku.Like.ReconcileIntervalSeconds)
 	}
+	if cfg.Danmaku.Like.BatchSize != 100 || cfg.Danmaku.Like.BatchWaitMilliseconds != 200 {
+		t.Fatalf("unexpected like batch config: %+v", cfg.Danmaku.Like)
+	}
+	if cfg.Danmaku.Like.IdempotencyTTLSeconds != 86400 || cfg.Danmaku.Like.ReservationTTLSeconds != 60 {
+		t.Fatalf("unexpected like idempotency config: %+v", cfg.Danmaku.Like)
+	}
 }

@@ -102,9 +102,9 @@
 
 回答：danmas.message_id 有唯一索引，消费者事务内先 Count，存在则 no-op，不存在再 Insert。更好的实现是直接批量 INSERT ... ON DUPLICATE KEY UPDATE/IGNORE，减少往返并让数据库唯一约束成为最终裁判。
 
-### Q24：为什么点赞当前不幂等？
+### Q24：点赞如何同时实现高吞吐与 Kafka 重放幂等？
 
-回答：点赞事件消费后直接 Redis INCR。若 INCR 成功但 offset 提交前崩溃，重放会再次 INCR；message_id 没有参与去重。可用 Lua 把 SETNX like:event:{message_id} 与 INCR 组合，或持久化 like_events 后异步聚合。
+回答：入口用 Redis Lua 预留 message_id，避免客户端普通重试重复写 Kafka；消费者按 100 条或 200ms 聚合，不保存逐点击 MySQL 明细。事务内每个房间写一条 like_batches(delta)、原子增加 rooms.like_count，并推进 Kafka 分区 checkpoint。即使数据库提交后、offset 提交前崩溃，重启后的批次边界改变，checkpoint 仍会跳过已经处理的 offset。代价是 message_id 去重只覆盖配置的 Redis TTL；Kafka 重放幂等则是持久的。
 
 ### Q25：Redis Lua 脚本保证了什么？
 
@@ -352,7 +352,7 @@
 
 ### Q84：缓存更新为什么常讨论一致性？
 
-回答：数据库和缓存双写没有天然事务，顺序不同会产生脏读或丢更新。当前点赞更明显：写 Redis 不写 MySQL。生产可用事件日志为真相、消费者聚合 Redis 和 MySQL，或 Outbox/CDC 保证变更可重放。
+回答：数据库和缓存双写没有天然事务，顺序不同会产生脏读或丢更新。当前点赞以 MySQL rooms.like_count 为真相源，聚合事务成功后写 Redis 的绝对值，再广播状态，最后提交 Kafka offset；中途失败可以靠 Kafka 重放和 MySQL checkpoint 重试。它仍是最终一致，不是跨 MySQL、Redis、Kafka 的分布式事务。
 
 ## 八、Kafka
 

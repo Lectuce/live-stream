@@ -63,9 +63,12 @@ type realtimeKafkaMetrics struct {
 	producerWrite    realtimeDurationHistogram
 	redisPublish     realtimeDurationHistogram
 	commitEnqueue    realtimeDurationHistogram
+	likeBatchPersist realtimeDurationHistogram
 	fetchedTotal     atomic.Uint64
 	publishedTotal   atomic.Uint64
 	commitBatchTotal atomic.Uint64
+	likeBatchTotal   atomic.Uint64
+	likeEventTotal   atomic.Uint64
 }
 
 var realtimeMetrics realtimeKafkaMetrics
@@ -74,10 +77,13 @@ type RealtimeMetricsSnapshot struct {
 	FetchedTotal     uint64                   `json:"kafka_realtime_fetched_total"`
 	PublishedTotal   uint64                   `json:"kafka_realtime_published_total"`
 	CommitBatchTotal uint64                   `json:"kafka_realtime_commit_batch_total"`
+	LikeBatchTotal   uint64                   `json:"kafka_realtime_like_batch_total"`
+	LikeEventTotal   uint64                   `json:"kafka_realtime_like_event_total"`
 	MessageAge       realtimeDurationSnapshot `json:"kafka_realtime_message_age"`
 	ProducerWrite    realtimeDurationSnapshot `json:"kafka_producer_write_duration"`
 	RedisPublish     realtimeDurationSnapshot `json:"kafka_realtime_redis_publish_duration"`
 	CommitEnqueue    realtimeDurationSnapshot `json:"kafka_realtime_commit_enqueue_duration"`
+	LikeBatchPersist realtimeDurationSnapshot `json:"kafka_realtime_like_batch_persist_duration"`
 }
 
 func RealtimeMetrics() RealtimeMetricsSnapshot {
@@ -85,10 +91,13 @@ func RealtimeMetrics() RealtimeMetricsSnapshot {
 		FetchedTotal:     realtimeMetrics.fetchedTotal.Load(),
 		PublishedTotal:   realtimeMetrics.publishedTotal.Load(),
 		CommitBatchTotal: realtimeMetrics.commitBatchTotal.Load(),
+		LikeBatchTotal:   realtimeMetrics.likeBatchTotal.Load(),
+		LikeEventTotal:   realtimeMetrics.likeEventTotal.Load(),
 		MessageAge:       snapshotRealtimeDuration(&realtimeMetrics.messageAge),
 		ProducerWrite:    snapshotRealtimeDuration(&realtimeMetrics.producerWrite),
 		RedisPublish:     snapshotRealtimeDuration(&realtimeMetrics.redisPublish),
 		CommitEnqueue:    snapshotRealtimeDuration(&realtimeMetrics.commitEnqueue),
+		LikeBatchPersist: snapshotRealtimeDuration(&realtimeMetrics.likeBatchPersist),
 	}
 }
 

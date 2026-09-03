@@ -486,12 +486,12 @@ else
 fi
 
 step "Auditing like consistency implementation"
-if grep -q 'repo.ApplyLikeEvent(ctx, event)' internal/kafka/realtime_consumer.go \
-  && grep -q 'OnConflict{DoNothing: true}' internal/repo/like.go \
-  && grep -q 'primaryKey' internal/model/like_event.go; then
-  pass "Like increment crash idempotency" "durable like_events.message_id transaction"
+if grep -q 'applyLikeBatchesUntilSuccess' internal/kafka/realtime_consumer.go \
+  && grep -q 'lockLikeCheckpoint' internal/repo/like.go \
+  && grep -q 'LikeAggregationCheckpoint' internal/model/like_batch.go; then
+  pass "Like increment crash idempotency" "aggregate batch and Kafka checkpoint transaction"
 else
-  known_issue "Like increment can repeat after restart" "Durable message_id idempotency path was not detected."
+  known_issue "Like increment can repeat after restart" "Aggregate Kafka checkpoint path was not detected."
 fi
 if grep -q 'UpdateColumn("like_count"' internal/repo/like.go \
   && grep -q 'ORDER BY room.like_count DESC' internal/repo/room.go; then

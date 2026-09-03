@@ -4,9 +4,10 @@
 
 ```text
                               ┌→ realtime consumer group
-WebSocket → Kafka RequireAll ─┤       → Redis Pub/Sub → WebSocket Gateway
+WebSocket → Kafka RequireAll ─┤       ├→ 弹幕：Redis Pub/Sub → WebSocket Gateway
+                              │       └→ 点赞：MySQL 聚合 → Redis 状态 → Gateway
                               └→ persistence consumer group
-                                      → MySQL 批量写入
+                                      → 弹幕历史 MySQL 批量写入
 ```
 
 Kafka 是实时链路和持久化链路共同的可靠交接点：
@@ -205,7 +206,46 @@ client.start();
 
 跨域浏览器调用使用与 WebSocket 相同的 `server.allowed_origins` 白名单，并允许凭证 Cookie。正式环境应使用 HTTPS/WSS；当前登录 Cookie 带 `Secure`，普通 HTTP 只适合匿名观看或命令行压测。
 
-## 9. 验证
+## 9. 点赞聚合与故障边界
+
+点赞仍采用“不同 `message_id` 表示不同点击”的连续点赞语义，但不再为每次点击写一行 MySQL。入口先在 Redis 原子完成 `message_id` 预留和单用户/单房间限流；Kafka 同步确认后，预留标记转为已接收状态。默认去重窗口为 24 小时，预留租约为 60 秒。
+
+realtime consumer 按 100 条或 200 ms 刷新。一次刷新按 Kafka Topic、Partition 和房间聚合，MySQL 事务内完成：
+
+1. 锁定 `(consumer_group, topic, partition)` 聚合 checkpoint；
+2. 丢弃 `offset <= last_offset` 的重放事件；
+3. 每个房间写一条 `like_batches`，记录 `batch_id`、offset 范围和 `delta`；
+4. 每个房间只执行一次 `rooms.like_count = like_count + delta`；
+5. 在同一事务中推进 checkpoint。
+
+`batch_id` 由 consumer group、Topic、Partition、room_id 和本批 offset 范围确定。checkpoint 额外解决了一个关键问题：进程重启后批次边界可能变化，不能只依靠“旧批次 ID 再插一次会冲突”来去重。
+
+事务后的严格顺序为：
+
+```text
+MySQL 聚合事务成功
+→ Redis 写入绝对 like_count 并确认 message_id 标记
+→ 发布最新 room_state
+→ 提交 Kafka offset
+```
+
+因此，MySQL 成功但 Kafka offset 尚未提交时崩溃，只会造成重放，不会重复计数；MySQL 失败时不会越过尚未落库的点赞提交更高 offset。MySQL 是累计点赞数真相源，Redis 是实时镜像，Kafka 在保留期内保存原始点击事件，`like_batches` 保存聚合审计记录。
+
+注意：单次 `message_id` 的客户端重试去重是有 TTL 的 Redis 约束，不是永久 MySQL 明细约束；Kafka 重放幂等则由 MySQL checkpoint 持久保证。这是用固定空间和更少热点写换取吞吐的明确取舍。
+
+相关配置：
+
+```yaml
+danmaku:
+  like:
+    max_per_second: 10
+    batch_size: 100
+    batch_wait_milliseconds: 200
+    idempotency_ttl_seconds: 86400
+    reservation_ttl_seconds: 60
+```
+
+## 10. 验证
 
 先测纯扇出：
 
@@ -261,3 +301,6 @@ curl http://127.0.0.1:6060/debug/kafka/realtime
 - `ws_resync_required_total`：发出的重同步提示；
 - `ws_slow_client_disconnect_total`：持续过载后主动断开的客户端；
 - `ws_write_errors_total`：Socket 写超时和写错误。
+- `kafka_realtime_like_batch_total`：已写入 MySQL 的聚合批次数；
+- `kafka_realtime_like_event_total`：已计入聚合的原始点赞数；
+- `kafka_realtime_like_batch_persist_duration`：点赞聚合事务耗时分布。

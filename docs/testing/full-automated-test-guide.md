@@ -211,10 +211,11 @@ Linux 对应参数为：
 
 脚本会同时做源码审计和运行时重复点赞检查。以下三个历史问题已经修复，并会持续回归验证：
 
-1. `like_events.message_id` 是持久化主键；事件插入和 `rooms.like_count + 1` 在同一个 MySQL 事务中完成，Kafka 重放是成功的空操作。
-2. `rooms.like_count` 已成为权威计数，所以房间榜单和详情能读取最新持久化点赞数；Redis 只保存实时镜像。
-3. 启动时会保留旧 Redis 较大值并迁回 MySQL，此后每隔配置周期从 MySQL 重建 Redis；Redis 重启或清空后能够恢复。
+1. realtime consumer 按 100 条或 200 ms 聚合点赞，每个房间/分区窗口只写一条 `like_batches(delta)`，并且只更新一次 `rooms` 热点行。
+2. 聚合记录、`rooms.like_count += delta` 和 Kafka 分区 checkpoint 位于同一个 MySQL 事务；即使重启后批次边界改变，已处理 offset 也不会再次计数。
+3. `rooms.like_count` 是权威计数，Redis 只保存实时镜像；MySQL 成功后严格按 Redis、广播、Kafka offset 的顺序推进。
+4. 启动时会保留旧 Redis 较大值并迁回 MySQL，此后每隔配置周期从 MySQL 重建 Redis；Redis 重启或清空后能够恢复。
 
-用户仍然可以连续点赞，但单个用户对单个房间默认限制为每秒 10 次。不同 `message_id` 是不同的点赞，同一个 `message_id` 无论重试多少次都只计一次。
+用户仍然可以连续点赞，但单个用户对单个房间默认限制为每秒 10 次。不同 `message_id` 是不同的点赞；相同 `message_id` 在配置的 Redis 幂等窗口内只会进入 Kafka 一次。Kafka 自身的消费重放由 MySQL checkpoint 永久吸收。
 
 脚本不会自动停止 Redis/Kafka/MySQL 来做故障注入，因为这会影响共享环境并可能破坏数据。服务重启、Redis 清空、Kafka 重放、MySQL 故障等测试应在独立 Docker 测试栈中另行执行。

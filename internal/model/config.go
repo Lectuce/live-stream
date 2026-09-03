@@ -19,6 +19,10 @@ type DanmakuConfig struct {
 type LikeConfig struct {
 	MaxPerSecond             int `yaml:"max_per_second" mapstructure:"max_per_second"`
 	ReconcileIntervalSeconds int `yaml:"reconcile_interval_seconds" mapstructure:"reconcile_interval_seconds"`
+	BatchSize                int `yaml:"batch_size" mapstructure:"batch_size"`
+	BatchWaitMilliseconds    int `yaml:"batch_wait_milliseconds" mapstructure:"batch_wait_milliseconds"`
+	IdempotencyTTLSeconds    int `yaml:"idempotency_ttl_seconds" mapstructure:"idempotency_ttl_seconds"`
+	ReservationTTLSeconds    int `yaml:"reservation_ttl_seconds" mapstructure:"reservation_ttl_seconds"`
 }
 
 type RecentCacheConfig struct {

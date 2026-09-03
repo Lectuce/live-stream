@@ -315,7 +315,7 @@ func (c *Client) readPump() {
 				continue
 			}
 			// Canonicalize equivalent UUID spellings so they cannot bypass the
-			// durable message_id uniqueness constraint.
+			// Redis message_id idempotency key.
 			msg.MessageID = parsedMessageID.String()
 		}
 		msg.UserID = c.UserID
@@ -325,12 +325,35 @@ func (c *Client) readPump() {
 		if msg.Type == "" {
 			msg.Type = model.MsgTypeDanma
 		}
+		var likeIdentity dao.RoomLikeIdentity
+		likeReserved := false
+		likeAcceptedTTL := 24 * time.Hour
 		if msg.Type == model.MsgTypeLike {
 			maxPerSecond := 10
-			if config.GlobalConfig != nil && config.GlobalConfig.Danmaku.Like.MaxPerSecond > 0 {
-				maxPerSecond = config.GlobalConfig.Danmaku.Like.MaxPerSecond
+			pendingTTL := time.Minute
+			if config.GlobalConfig != nil {
+				likeConfig := config.GlobalConfig.Danmaku.Like
+				if likeConfig.MaxPerSecond > 0 {
+					maxPerSecond = likeConfig.MaxPerSecond
+				}
+				if likeConfig.ReservationTTLSeconds > 0 {
+					pendingTTL = time.Duration(likeConfig.ReservationTTLSeconds) * time.Second
+				}
+				if likeConfig.IdempotencyTTLSeconds > 0 {
+					likeAcceptedTTL = time.Duration(likeConfig.IdempotencyTTLSeconds) * time.Second
+				}
 			}
-			allowed, limitErr := dao.AllowRoomLike(c.hub.ctx, c.RoomID, c.UserID, maxPerSecond)
+			likeIdentity = dao.RoomLikeIdentity{
+				MessageID: msg.MessageID,
+				RoomID:    c.RoomID,
+				UserID:    c.UserID,
+			}
+			reservation, limitErr := dao.ReserveRoomLike(
+				c.hub.ctx,
+				likeIdentity,
+				maxPerSecond,
+				pendingTTL,
+			)
 			if limitErr != nil {
 				c.hub.enqueueJSON(c, map[string]interface{}{
 					"type":       "error",
@@ -340,7 +363,16 @@ func (c *Client) readPump() {
 				})
 				continue
 			}
-			if !allowed {
+			switch reservation {
+			case dao.LikeReservationAcquired:
+				likeReserved = true
+			case dao.LikeReservationAccepted:
+				c.hub.enqueueJSON(c, map[string]interface{}{
+					"type":       model.MsgTypeAccepted,
+					"message_id": msg.MessageID,
+				})
+				continue
+			case dao.LikeReservationRateLimited:
 				c.hub.enqueueJSON(c, map[string]interface{}{
 					"type":       "error",
 					"code":       http.StatusTooManyRequests,
@@ -348,11 +380,32 @@ func (c *Client) readPump() {
 					"msg":        "点赞过于频繁，请稍后再试",
 				})
 				continue
+			case dao.LikeReservationPending:
+				c.hub.enqueueJSON(c, map[string]interface{}{
+					"type":       "error",
+					"code":       http.StatusConflict,
+					"message_id": msg.MessageID,
+					"msg":        "该点赞正在写入，请稍后使用相同 message_id 重试",
+				})
+				continue
+			default:
+				c.hub.enqueueJSON(c, map[string]interface{}{
+					"type":       "error",
+					"code":       http.StatusBadRequest,
+					"message_id": msg.MessageID,
+					"msg":        "message_id 已被其他点赞请求使用",
+				})
+				continue
 			}
 		}
 
 		err = kafka.SendDanmaMsg(c.hub.ctx, msg)
 		if err != nil {
+			if likeReserved {
+				if releaseErr := dao.ReleaseRoomLikeReservation(c.hub.ctx, likeIdentity); releaseErr != nil {
+					log.Printf("release failed like reservation: %v", releaseErr)
+				}
+			}
 			log.Printf("produce danma to kafka failed: %v", err)
 			c.hub.enqueueJSON(c, map[string]interface{}{
 				"type":       "error",
@@ -361,6 +414,14 @@ func (c *Client) readPump() {
 				"msg":        "弹幕暂时发送失败，请使用相同 message_id 重试",
 			})
 			continue
+		}
+		if likeReserved {
+			if confirmErr := dao.ConfirmRoomLike(c.hub.ctx, likeIdentity, likeAcceptedTTL); confirmErr != nil {
+				// Kafka is already the durable handoff. The consumer repairs this
+				// Redis marker after the aggregate commits, so do not report the
+				// accepted Kafka write as a failed click.
+				log.Printf("confirm accepted like reservation: %v", confirmErr)
+			}
 		}
 		c.hub.enqueueJSON(c, map[string]interface{}{
 			"type":       model.MsgTypeAccepted,

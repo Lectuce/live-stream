@@ -343,28 +343,29 @@ function Invoke-StaticReliabilityAudit {
     $redisPath = Join-Path $projectRoot "internal/dao/redis.go"
     $roomRepoPath = Join-Path $projectRoot "internal/repo/room.go"
     $likeRepoPath = Join-Path $projectRoot "internal/repo/like.go"
-	$likeModelPath = Join-Path $projectRoot "internal/model/like_event.go"
+	$likeModelPath = Join-Path $projectRoot "internal/model/like_batch.go"
     $realtime = Get-Content $realtimePath -Raw
     $redis = Get-Content $redisPath -Raw
     $roomRepo = Get-Content $roomRepoPath -Raw
 	$likeRepo = if (Test-Path $likeRepoPath) { Get-Content $likeRepoPath -Raw } else { "" }
 	$likeModel = if (Test-Path $likeModelPath) { Get-Content $likeModelPath -Raw } else { "" }
 
-    $durableIdempotency = $realtime -match "repo\.ApplyLikeEvent\(ctx, event\)" -and
-		$likeRepo -match "OnConflict\{DoNothing: true\}" -and
-		$likeModel -match "MessageID.*primaryKey"
+    $durableIdempotency = $realtime -match "applyLikeBatchesUntilSuccess" -and
+		$likeRepo -match "lockLikeCheckpoint" -and
+		$likeRepo -match "last_offset" -and
+		$likeModel -match "LikeAggregationCheckpoint"
     if (-not $durableIdempotency) {
         Add-KnownIssue "Like increment can repeat after consumer restart" `
-            "No durable message_id uniqueness and idempotent apply path was detected."
+            "No transactional Kafka partition checkpoint was detected for aggregate likes."
     }
     else {
         Add-Check "Like increment crash idempotency" PASS `
-			"like_events.message_id is durable and ApplyLikeEvent uses INSERT-on-conflict in the same transaction as the counter update."
+            "like_batches and the Kafka partition checkpoint advance in the same MySQL transaction."
     }
 
     $rankingReadsMySQL = $roomRepo -match "ORDER BY room\.like_count DESC"
     $writesRoomLikeCount = $likeRepo -match 'UpdateColumn\("like_count"' -and
-		$likeRepo -match 'gorm\.Expr\("like_count \+ 1"\)'
+		$likeRepo -match 'gorm\.Expr\("like_count \+ \?"'
     if ($rankingReadsMySQL -and -not $writesRoomLikeCount) {
         Add-KnownIssue "Redis likes are not written back to rooms.like_count" `
             "Room ranking reads rooms.like_count from MySQL, while the realtime like consumer contains no MySQL write-back."

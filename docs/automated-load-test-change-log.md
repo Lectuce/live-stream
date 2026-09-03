@@ -906,3 +906,52 @@ Linux 测试分为 `Functional`、`Smoke`、`Standard`、`Stress`、`Extreme` �
 - Linux Vinext 开发服务器使用 `--hostname 0.0.0.0` 对局域网监听；
 - `AppHeader` 使用 `useSyncExternalStore` 提供稳定的服务端水合快照，避免 SSR 显示 `127.0.0.1:9000`、浏览器首帧显示页面 Origin 而触发 Hydration mismatch；
 - 修改后已通过 `pnpm lint` 和 `pnpm build`。
+
+## 20. 点赞按窗口聚合持久化
+
+第 17 节记录的是上一阶段的逐点击持久化方案。本轮为降低高热房间的 MySQL 事务数和 `rooms` 行锁竞争，将实时点赞切换为聚合模型：
+
+- realtime consumer 默认累计 100 条或等待 200 ms 后刷新；
+- 点赞按 Topic、Partition、room_id 分组，每组生成一条 `like_batches(delta)`；
+- MySQL 在同一事务内插入聚合记录、执行 `rooms.like_count += delta`、推进分区 checkpoint；
+- 事务提交后依次更新 Redis 绝对计数、广播最新 `room_state`、提交 Kafka offset；
+- 同一次刷新中即使夹杂弹幕或非法消息，也不会先提交越过未落库点赞的 offset；
+- 客户端 `message_id` 在 Redis 中先预留，Kafka 确认后延长幂等 TTL，避免普通重试重复生产；
+- 原始点赞仍保存在 Kafka 保留期内，MySQL 不再新增逐点击 `like_events` 明细。
+
+只使用 `batch_id` 不能完整处理“重启后批次边界改变”的情况。因此新增 `like_aggregation_checkpoints`，以 `(consumer_group, topic, partition)` 为主键记录 `last_offset`。事务重放时只聚合比 checkpoint 更新的 Kafka offset，批次 ID 同时由来源、房间和 offset 范围确定。
+
+例如同一房间 200 ms 内有 100 次点赞，理想情况下由 100 次 MySQL 事务、100 次热点行更新和 100 条明细，降为 1 次事务、1 次热点行更新和 1 条 `delta=100` 聚合记录。Redis 点赞总数和房间状态广播各执行一次；`message_id` 确认使用 pipeline，不产生逐条数据库写入。
+
+新增配置：
+
+```yaml
+danmaku:
+  like:
+    batch_size: 100
+    batch_wait_milliseconds: 200
+    idempotency_ttl_seconds: 86400
+    reservation_ttl_seconds: 60
+```
+
+新增诊断指标：
+
+```text
+kafka_realtime_like_batch_total
+kafka_realtime_like_event_total
+kafka_realtime_like_batch_persist_duration
+```
+
+幂等边界也随方案改变：Kafka 消费重放由 MySQL checkpoint 持久保证；客户端重复 `message_id` 由 Redis TTL 保证，不再承诺永久保存每个点击 ID。这个取舍消除了 `like_events` 的无界增长，但若业务以后要求永久审计每一次点击，应将原始事件下沉到对象存储或分析库，而不是重新压回房间热点事务。
+
+本轮涉及文件：
+
+| 文件 | 修改内容 |
+|---|---|
+| `internal/model/like_batch.go` | 聚合批次及分区 checkpoint 模型 |
+| `internal/repo/like.go` | 聚合计划、批次 ID、事务和重放过滤 |
+| `internal/kafka/realtime_consumer.go` | 100 条/200 ms 缓冲及严格刷新顺序 |
+| `internal/dao/redis.go` | message_id 预留、确认、释放与批量确认 |
+| `internal/ws/client.go` | 点赞入口幂等和限流 |
+| `internal/kafka/metrics.go` | 聚合批次数、事件数和事务延迟指标 |
+| `scripts/full-test.ps1`、`scripts/full-test.sh` | 聚合 checkpoint 静态回归审计 |

@@ -16,17 +16,24 @@ import (
 )
 
 const (
-	realtimeCommitBatch = 100
-	realtimeCommitWait  = 200 * time.Millisecond
+	defaultRealtimeCommitBatch = 100
+	defaultRealtimeCommitWait  = 200 * time.Millisecond
+	defaultLikeIdempotencyTTL  = 24 * time.Hour
 )
 
+type pendingLikeEvent struct {
+	event   model.Message
+	message kafkago.Message
+}
+
 // StartRealtimeConsumer keeps MySQL outside the danmaku broadcast path. Likes
-// are the exception: their durable message_id record and rooms.like_count are
-// committed atomically before Redis is updated, so Kafka replay cannot count a
-// logical click twice and Redis can always be rebuilt from MySQL.
+// are buffered by room and persisted as aggregate delta rows. The aggregate and
+// a Kafka partition checkpoint commit atomically before Redis state, Pub/Sub,
+// and finally the Kafka consumer offset are advanced.
 func StartRealtimeConsumer(ctx context.Context) error {
 	cfg := config.GlobalConfig.Kafka
 	groupID := cfg.GroupID + "-realtime"
+	batchSize, batchWait, idempotencyTTL := likeBatchSettings()
 	reader := kafkago.NewReader(kafkago.ReaderConfig{
 		Brokers:     cfg.Brokers,
 		GroupID:     groupID,
@@ -39,15 +46,21 @@ func StartRealtimeConsumer(ctx context.Context) error {
 		MaxWait:          50 * time.Millisecond,
 		ReadBatchTimeout: time.Second,
 		// CommitMessages becomes asynchronous when CommitInterval is non-zero.
-		// Redis publication still happens first, but coordinator round trips no
-		// longer pause the realtime fetch/publish loop.
-		CommitInterval: realtimeCommitWait,
+		// All durable/visible side effects still complete before a commit is
+		// enqueued, and replay is absorbed by the DB checkpoint.
+		CommitInterval: batchWait,
 		ErrorLogger: kafkago.LoggerFunc(func(format string, args ...any) {
 			log.Printf("kafka realtime reader: "+format, args...)
 		}),
 	})
 	defer reader.Close()
-	log.Printf("danmu realtime consumer started, groupId=%s, topic=%s", groupID, cfg.DanmuTopic)
+	log.Printf(
+		"danmu realtime consumer started, groupId=%s, topic=%s, like_batch=%d/%s",
+		groupID,
+		cfg.DanmuTopic,
+		batchSize,
+		batchWait,
+	)
 
 	type fetchResult struct {
 		message kafkago.Message
@@ -69,10 +82,12 @@ func StartRealtimeConsumer(ctx context.Context) error {
 		}
 	}()
 
-	ticker := time.NewTicker(realtimeCommitWait)
+	ticker := time.NewTicker(batchWait)
 	defer ticker.Stop()
-	pendingCommits := make([]kafkago.Message, 0, realtimeCommitBatch)
+	pendingCommits := make([]kafkago.Message, 0, batchSize)
+	pendingLikes := make([]pendingLikeEvent, 0, batchSize)
 	dirtyLikeCounts := make(map[uint64]int64)
+
 	flushCommits := func(commitCtx context.Context) error {
 		if len(pendingCommits) == 0 {
 			return nil
@@ -88,26 +103,54 @@ func StartRealtimeConsumer(ctx context.Context) error {
 		return nil
 	}
 
+	flushAll := func(flushCtx context.Context) error {
+		if len(pendingLikes) > 0 {
+			startedAt := time.Now()
+			applied, err := applyLikeBatchesUntilSuccess(
+				flushCtx,
+				groupID,
+				cfg.DanmuTopic,
+				pendingLikes,
+			)
+			realtimeMetrics.likeBatchPersist.observe(time.Since(startedAt))
+			if err != nil {
+				return err
+			}
+			if err := syncLikeBatchRedisUntilSuccess(
+				flushCtx,
+				applied.CountsByRoom,
+				pendingLikes,
+				idempotencyTTL,
+			); err != nil {
+				return err
+			}
+			for roomID, count := range applied.CountsByRoom {
+				dirtyLikeCounts[roomID] = count
+			}
+			realtimeMetrics.likeBatchTotal.Add(uint64(applied.BatchCount))
+			realtimeMetrics.likeEventTotal.Add(uint64(applied.EventCount))
+			pendingLikes = pendingLikes[:0]
+		}
+		if err := flushLikeStates(flushCtx, dirtyLikeCounts); err != nil {
+			return err
+		}
+		return flushCommits(flushCtx)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			err := flushLikeStates(flushCtx, dirtyLikeCounts)
-			if err == nil {
-				err = flushCommits(flushCtx)
-			}
+			err := flushAll(flushCtx)
 			cancel()
 			return err
 		case <-ticker.C:
-			if err := flushLikeStates(ctx, dirtyLikeCounts); err != nil {
-				return err
-			}
-			if err := flushCommits(ctx); err != nil {
+			if err := flushAll(ctx); err != nil {
 				return err
 			}
 		case result, ok := <-fetched:
 			if !ok {
-				return flushCommits(ctx)
+				return flushAll(ctx)
 			}
 			if result.err != nil {
 				if ctx.Err() != nil {
@@ -132,42 +175,36 @@ func StartRealtimeConsumer(ctx context.Context) error {
 					err,
 				)
 				pendingCommits = append(pendingCommits, result.message)
-				if len(pendingCommits) >= realtimeCommitBatch {
-					if err := flushCommits(ctx); err != nil {
+				if len(pendingCommits) >= batchSize {
+					if err := flushAll(ctx); err != nil {
 						return err
 					}
-					ticker.Reset(realtimeCommitWait)
+					ticker.Reset(batchWait)
 				}
 				continue
 			}
 			enrichMessageFromKafka(&event, result.message)
-			// Likes are aggregated in Redis and emitted as a replaceable state
-			// update. They must not create one room-wide event per click.
 			if event.Type == model.MsgTypeLike {
-				count, err := applyLikeUntilSuccess(ctx, event)
-				if err != nil {
-					return err
-				}
-				dirtyLikeCounts[event.RoomID] = count
+				pendingLikes = append(pendingLikes, pendingLikeEvent{
+					event:   event,
+					message: result.message,
+				})
 				pendingCommits = append(pendingCommits, result.message)
-				if len(pendingCommits) >= realtimeCommitBatch {
-					if err := flushLikeStates(ctx, dirtyLikeCounts); err != nil {
+				if len(pendingLikes) >= batchSize || len(pendingCommits) >= batchSize {
+					if err := flushAll(ctx); err != nil {
 						return err
 					}
-					if err := flushCommits(ctx); err != nil {
-						return err
-					}
-					ticker.Reset(realtimeCommitWait)
+					ticker.Reset(batchWait)
 				}
 				continue
 			}
 			if event.Type != model.MsgTypeDanma {
 				pendingCommits = append(pendingCommits, result.message)
-				if len(pendingCommits) >= realtimeCommitBatch {
-					if err := flushCommits(ctx); err != nil {
+				if len(pendingCommits) >= batchSize {
+					if err := flushAll(ctx); err != nil {
 						return err
 					}
-					ticker.Reset(realtimeCommitWait)
+					ticker.Reset(batchWait)
 				}
 				continue
 			}
@@ -175,37 +212,117 @@ func StartRealtimeConsumer(ctx context.Context) error {
 				return err
 			}
 			pendingCommits = append(pendingCommits, result.message)
-			if len(pendingCommits) >= realtimeCommitBatch {
-				if err := flushCommits(ctx); err != nil {
+			if len(pendingCommits) >= batchSize {
+				if err := flushAll(ctx); err != nil {
 					return err
 				}
-				ticker.Reset(realtimeCommitWait)
+				ticker.Reset(batchWait)
 			}
 		}
 	}
 }
 
-func applyLikeUntilSuccess(ctx context.Context, event model.Message) (int64, error) {
-	for attempt := 1; ; attempt++ {
-		count, _, err := repo.ApplyLikeEvent(ctx, event)
-		if err == nil {
-			err = dao.SetRoomLikeCount(ctx, event.RoomID, count)
+func likeBatchSettings() (batchSize int, batchWait time.Duration, idempotencyTTL time.Duration) {
+	batchSize = defaultRealtimeCommitBatch
+	batchWait = defaultRealtimeCommitWait
+	idempotencyTTL = defaultLikeIdempotencyTTL
+	if config.GlobalConfig == nil {
+		return
+	}
+	likeConfig := config.GlobalConfig.Danmaku.Like
+	if likeConfig.BatchSize > 0 {
+		batchSize = likeConfig.BatchSize
+	}
+	if likeConfig.BatchWaitMilliseconds > 0 {
+		batchWait = time.Duration(likeConfig.BatchWaitMilliseconds) * time.Millisecond
+	}
+	if likeConfig.IdempotencyTTLSeconds > 0 {
+		idempotencyTTL = time.Duration(likeConfig.IdempotencyTTLSeconds) * time.Second
+	}
+	return
+}
+
+func applyLikeBatchesUntilSuccess(
+	ctx context.Context,
+	groupID string,
+	defaultTopic string,
+	pending []pendingLikeEvent,
+) (repo.LikeBatchApplyResult, error) {
+	events := make([]repo.LikeAggregationEvent, 0, len(pending))
+	for _, item := range pending {
+		topic := item.message.Topic
+		if topic == "" {
+			topic = defaultTopic
 		}
+		events = append(events, repo.LikeAggregationEvent{
+			Topic:     topic,
+			Partition: item.message.Partition,
+			Offset:    item.message.Offset,
+			RoomID:    item.event.RoomID,
+		})
+	}
+	for attempt := 1; ; attempt++ {
+		applied, err := repo.ApplyLikeBatches(ctx, groupID, events)
 		if err == nil {
-			return count, nil
+			return applied, nil
 		}
 		if attempt == 1 || attempt%10 == 0 {
-			log.Printf(
-				"apply room like failed, room=%d message_id=%s attempt=%d: %v",
-				event.RoomID,
-				event.MessageID,
-				attempt,
-				err,
-			)
+			log.Printf("persist aggregate like batches failed, attempt=%d, count=%d, err=%v", attempt, len(events), err)
 		}
 		select {
 		case <-ctx.Done():
-			return 0, ctx.Err()
+			return repo.LikeBatchApplyResult{}, ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func syncLikeBatchRedisUntilSuccess(
+	ctx context.Context,
+	counts map[uint64]int64,
+	pending []pendingLikeEvent,
+	idempotencyTTL time.Duration,
+) error {
+	for attempt := 1; ; attempt++ {
+		err := dao.SetRoomLikeCounts(ctx, counts)
+		if err == nil {
+			break
+		}
+		if attempt == 1 || attempt%10 == 0 {
+			log.Printf("sync aggregate room like counts failed, rooms=%d attempt=%d: %v", len(counts), attempt, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+
+	identities := make([]dao.RoomLikeIdentity, 0, len(pending))
+	for _, item := range pending {
+		identities = append(identities, dao.RoomLikeIdentity{
+			MessageID: item.event.MessageID,
+			RoomID:    item.event.RoomID,
+			UserID:    item.event.UserID,
+		})
+	}
+	for attempt := 1; ; attempt++ {
+		conflicts, err := dao.ConfirmRoomLikes(ctx, identities, idempotencyTTL)
+		if err == nil {
+			if conflicts > 0 {
+				// The aggregate is already durable, so a stale/colliding Redis
+				// identity must not poison the partition. Preserve the existing
+				// owner of the UUID and continue committing the Kafka range.
+				log.Printf("aggregate like idempotency marker conflicts, count=%d", conflicts)
+			}
+			return nil
+		}
+		if attempt == 1 || attempt%10 == 0 {
+			log.Printf("confirm aggregate like idempotency markers failed, attempt=%d, count=%d: %v", attempt, len(identities), err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-time.After(time.Second):
 		}
 	}

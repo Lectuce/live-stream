@@ -77,28 +77,194 @@ func SetRoomLikeCount(ctx context.Context, roomID uint64, count int64) error {
 	return SC.Redis.Set(ctx, key, count, 0).Err()
 }
 
-var allowRoomLikeScript = redis.NewScript(`
-local count = redis.call('INCR', KEYS[1])
-if count == 1 then
-  redis.call('EXPIRE', KEYS[1], 2)
+// SetRoomLikeCounts pipelines absolute counters. Repeating the whole pipeline
+// after a network error is safe because these are SET operations, not INCR.
+func SetRoomLikeCounts(ctx context.Context, counts map[uint64]int64) error {
+	if len(counts) == 0 {
+		return nil
+	}
+	_, err := SC.Redis.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for roomID, count := range counts {
+			pipe.Set(ctx, fmt.Sprintf("room:like:%d", roomID), count, 0)
+		}
+		return nil
+	})
+	return err
+}
+
+type LikeReservationStatus int64
+
+const (
+	LikeReservationRateLimited LikeReservationStatus = iota
+	LikeReservationAcquired
+	LikeReservationAccepted
+	LikeReservationPending
+	LikeReservationConflict
+)
+
+type RoomLikeIdentity struct {
+	MessageID string
+	RoomID    uint64
+	UserID    uint64
+}
+
+var reserveRoomLikeScript = redis.NewScript(`
+local current = redis.call('GET', KEYS[1])
+if current then
+  if current == ARGV[1] then
+    return 2
+  end
+  if current == ARGV[2] then
+    return 3
+  end
+  return 4
 end
-return count
+local count = redis.call('INCR', KEYS[2])
+if count == 1 then
+  redis.call('EXPIRE', KEYS[2], 2)
+end
+if count > tonumber(ARGV[3]) then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', tonumber(ARGV[4]))
+return 1
 `)
 
-// AllowRoomLike applies a per-user/per-room fixed-window rate limit. It is an
-// abuse guard only; durable message_id idempotency is enforced in MySQL.
-func AllowRoomLike(ctx context.Context, roomID, userID uint64, maxPerSecond int) (bool, error) {
+const confirmRoomLikeLua = `
+local current = redis.call('GET', KEYS[1])
+if not current or current == ARGV[1] or current == ARGV[2] then
+  redis.call('SET', KEYS[1], ARGV[2], 'EX', tonumber(ARGV[3]))
+  return 1
+end
+return 0
+`
+
+var confirmRoomLikeScript = redis.NewScript(confirmRoomLikeLua)
+
+var releaseRoomLikeScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`)
+
+// ReserveRoomLike atomically combines the short-window abuse guard with a
+// message_id reservation. A client retry with the same UUID does not create a
+// second Kafka record, while a failed Kafka write can release the reservation.
+func ReserveRoomLike(
+	ctx context.Context,
+	identity RoomLikeIdentity,
+	maxPerSecond int,
+	pendingTTL time.Duration,
+) (LikeReservationStatus, error) {
 	if maxPerSecond <= 0 {
-		return true, nil
+		maxPerSecond = 1<<31 - 1
 	}
-	bucket := time.Now().Unix()
-	key := "room:like:rate:" + strconv.FormatUint(roomID, 10) + ":" +
-		strconv.FormatUint(userID, 10) + ":" + strconv.FormatInt(bucket, 10)
-	count, err := allowRoomLikeScript.Run(ctx, SC.Redis, []string{key}).Int64()
+	if pendingTTL <= 0 {
+		pendingTTL = time.Minute
+	}
+	idempotencyKey := roomLikeIdempotencyKey(identity.MessageID)
+	rateKey := "room:like:rate:" + strconv.FormatUint(identity.RoomID, 10) + ":" +
+		strconv.FormatUint(identity.UserID, 10) + ":" + strconv.FormatInt(time.Now().Unix(), 10)
+	accepted, pending := roomLikeReservationValues(identity)
+	status, err := reserveRoomLikeScript.Run(
+		ctx,
+		SC.Redis,
+		[]string{idempotencyKey, rateKey},
+		accepted,
+		pending,
+		maxPerSecond,
+		int64(pendingTTL/time.Second),
+	).Int64()
+	return LikeReservationStatus(status), err
+}
+
+func ConfirmRoomLike(
+	ctx context.Context,
+	identity RoomLikeIdentity,
+	acceptedTTL time.Duration,
+) error {
+	if acceptedTTL <= 0 {
+		acceptedTTL = 24 * time.Hour
+	}
+	accepted, pending := roomLikeReservationValues(identity)
+	confirmed, err := confirmRoomLikeScript.Run(
+		ctx,
+		SC.Redis,
+		[]string{roomLikeIdempotencyKey(identity.MessageID)},
+		pending,
+		accepted,
+		int64(acceptedTTL/time.Second),
+	).Int64()
 	if err != nil {
-		return false, err
+		return err
 	}
-	return count <= int64(maxPerSecond), nil
+	if confirmed != 1 {
+		return fmt.Errorf("like message_id reservation belongs to another identity")
+	}
+	return nil
+}
+
+// ConfirmRoomLikes repairs the rare window in which Kafka accepted a like but
+// the gateway exited before extending its Redis idempotency reservation.
+func ConfirmRoomLikes(
+	ctx context.Context,
+	identities []RoomLikeIdentity,
+	acceptedTTL time.Duration,
+) (conflicts int, err error) {
+	if len(identities) == 0 {
+		return 0, nil
+	}
+	if acceptedTTL <= 0 {
+		acceptedTTL = 24 * time.Hour
+	}
+	results := make([]*redis.Cmd, 0, len(identities))
+	_, err = SC.Redis.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, identity := range identities {
+			accepted, pending := roomLikeReservationValues(identity)
+			results = append(results, pipe.Eval(
+				ctx,
+				confirmRoomLikeLua,
+				[]string{roomLikeIdempotencyKey(identity.MessageID)},
+				pending,
+				accepted,
+				int64(acceptedTTL/time.Second),
+			))
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	for _, result := range results {
+		confirmed, err := result.Int64()
+		if err != nil {
+			return 0, err
+		}
+		if confirmed != 1 {
+			conflicts++
+		}
+	}
+	return conflicts, nil
+}
+
+func ReleaseRoomLikeReservation(ctx context.Context, identity RoomLikeIdentity) error {
+	_, pending := roomLikeReservationValues(identity)
+	return releaseRoomLikeScript.Run(
+		ctx,
+		SC.Redis,
+		[]string{roomLikeIdempotencyKey(identity.MessageID)},
+		pending,
+	).Err()
+}
+
+func roomLikeIdempotencyKey(messageID string) string {
+	return "room:like:idempotency:" + messageID
+}
+
+func roomLikeReservationValues(identity RoomLikeIdentity) (accepted string, pending string) {
+	fingerprint := strconv.FormatUint(identity.RoomID, 10) + ":" + strconv.FormatUint(identity.UserID, 10)
+	return "accepted:" + fingerprint, "pending:" + fingerprint
 }
 
 var restoreRoomLikeCountScript = redis.NewScript(`
