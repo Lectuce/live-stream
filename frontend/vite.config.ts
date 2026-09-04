@@ -1,7 +1,7 @@
 import { sites } from '@openai/sites-vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
-import { defineConfig } from 'vite';
+import { defineConfig, type ProxyOptions } from 'vite';
 import hostingConfig from './.openai/hosting.json';
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
@@ -45,17 +45,27 @@ export default defineConfig(async () => {
   const { cloudflare } = await import('@cloudflare/vite-plugin');
 
   const backendTarget = process.env.LIVE_STREAM_BACKEND_URL || 'http://127.0.0.1:9000';
+  const websocketOrigin = process.env.LIVE_STREAM_WEBSOCKET_ORIGIN || 'http://localhost:3000';
+  const apiProxy: ProxyOptions = {
+    target: backendTarget,
+    changeOrigin: true,
+    ws: true,
+    configure(proxy) {
+      // The browser talks to this trusted same-origin development proxy.
+      // Normalize the forwarded WebSocket Origin to a value explicitly
+      // allowed by the Go server, independent of localhost/127/LAN URL.
+      proxy.on('proxyReqWs', (proxyRequest) => {
+        proxyRequest.setHeader('Origin', websocketOrigin);
+      });
+    },
+  };
 
   return {
     css: { postcss: { plugins: [tailwindcss()] } },
     server: {
       ...(isCodexSeatbeltSandbox ? { watch: { useFsEvents: false, usePolling: true } } : {}),
       proxy: {
-        '/api': {
-          target: backendTarget,
-          changeOrigin: true,
-          ws: true,
-        },
+        '/api': apiProxy,
       },
     },
     plugins: [

@@ -44,9 +44,10 @@ Vinext 使用 `--hostname`（不是 Vite CLI 的 `--host`）。局域网浏览�
 Set-Location D:\GoProjects\live-stream\frontend
 $env:Path = "C:\Users\Ambition\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;C:\Users\Ambition\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback;$env:Path"
 $env:LIVE_STREAM_BACKEND_URL = "http://172.21.15.57:9000"
+$env:LIVE_STREAM_WEBSOCKET_ORIGIN = "http://localhost:3000"
 pnpm dev
 ```
 
 前端开发服务器会将 `/api` 和 WebSocket 请求反向代理到后端。不要在连接设置里改成局域网地址，保留页面当前同源地址即可；这样登录 Cookie 才不会被浏览器的跨站策略拦截。
 
-后端 `config/config.yaml` 的 `server.allowed_origins` 需要包含浏览器实际打开的前端 Origin，例如 `http://localhost:3000`。
+`LIVE_STREAM_WEBSOCKET_ORIGIN` 必须与后端 `config/config.yaml` 的 `server.allowed_origins` 中某一项完全相同。浏览器保存过的旧版远端直连地址会自动迁移回页面同源地址。

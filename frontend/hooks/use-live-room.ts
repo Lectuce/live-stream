@@ -6,6 +6,7 @@ import { toWebSocketBase } from '@/lib/runtime-config';
 import type { ConnectionState, DanmakuMessage } from '@/lib/types';
 
 const MAX_MESSAGES = 500;
+const CONNECTION_TIMEOUT_MS = 8000;
 
 type LikeSendState = 'idle' | 'accepted' | 'error';
 
@@ -32,6 +33,7 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
   const wsRef = useRef<WebSocket | null>(null);
   const lastSeqRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
   const recoveringRef = useRef(false);
   const pendingLikesRef = useRef(new Map<string, boolean>());
@@ -118,8 +120,16 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
       setConnection('connecting');
       const ws = new WebSocket(`${toWebSocketBase(apiBase)}/api/v1/ws?room_id=${roomId}`);
       wsRef.current = ws;
+      connectionTimeoutRef.current = setTimeout(() => {
+        if (disposed || wsRef.current !== ws || ws.readyState !== WebSocket.CONNECTING) return;
+        setConnection('error');
+        setError('实时连接超时，请检查后端地址和 WebSocket Origin 白名单');
+        ws.close();
+      }, CONNECTION_TIMEOUT_MS);
       ws.onopen = () => {
         if (disposed || wsRef.current !== ws) return;
+        if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
+        connectionTimeoutRef.current = null;
         reconnectAttemptRef.current = 0;
         setConnection('open'); setError('');
         if (lastSeqRef.current > 0) void recover(lastSeqRef.current);
@@ -155,10 +165,14 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
         } catch { setError('收到无法解析的 WebSocket 消息'); }
       };
       ws.onerror = () => {
-        if (!disposed && wsRef.current === ws) setConnection('error');
+        if (disposed || wsRef.current !== ws) return;
+        setConnection('error');
+        setError('WebSocket 连接失败，请检查前端地址是否在后端 allowed_origins 中');
       };
       ws.onclose = () => {
         if (disposed || wsRef.current !== ws) return;
+        if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
+        connectionTimeoutRef.current = null;
         wsRef.current = null;
         let rolledBack = 0;
         for (const [messageID, accepted] of pendingLikesRef.current) {
@@ -174,7 +188,8 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
           showLikeState('error', 2000);
           setError('实时连接已断开，未确认的点赞未计入');
         }
-        setConnection('connecting');
+        setConnection('error');
+        setError((current) => current || '实时连接已断开，正在尝试重连');
         const delay = Math.min(8000, 500 * 2 ** reconnectAttemptRef.current++);
         reconnectTimerRef.current = setTimeout(() => {
           reconnectTimerRef.current = null;
@@ -187,6 +202,8 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
       disposed = true;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
+      if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
+      connectionTimeoutRef.current = null;
       const ws = wsRef.current;
       wsRef.current = null;
       if (ws) {
