@@ -7,6 +7,7 @@ import type { ConnectionState, DanmakuMessage } from '@/lib/types';
 
 const MAX_MESSAGES = 500;
 const CONNECTION_TIMEOUT_MS = 8000;
+const STABLE_CONNECTION_MS = 10000;
 
 type LikeSendState = 'idle' | 'accepted' | 'error';
 
@@ -52,6 +53,7 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
   const lastSeqRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stableConnectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
   const recoveringRef = useRef(false);
   const pendingLikesRef = useRef(new Map<string, boolean>());
@@ -125,7 +127,10 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
         cursor = Math.max(cursor, result.next_seq || 0);
         if (!result.has_more) break;
       }
-      setError('');
+      // A successful replay only clears an earlier replay failure. It must not
+      // erase a WebSocket disconnect error, otherwise the one-second sampled
+      // replay loop makes the connection warning flash on and off.
+      setError((current) => current.startsWith('补拉失败：') || current === '补拉失败' ? '' : current);
     } catch (err) { setError(err instanceof Error ? `补拉失败：${err.message}` : '补拉失败'); }
     finally { recoveringRef.current = false; }
   }, [apiBase, append, roomId]);
@@ -166,8 +171,14 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
         if (disposed || wsRef.current !== ws) return;
         if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
         connectionTimeoutRef.current = null;
-        reconnectAttemptRef.current = 0;
         setConnection('open'); setError('');
+        if (stableConnectionTimerRef.current) clearTimeout(stableConnectionTimerRef.current);
+        stableConnectionTimerRef.current = setTimeout(() => {
+          if (!disposed && wsRef.current === ws && ws.readyState === WebSocket.OPEN) {
+            reconnectAttemptRef.current = 0;
+          }
+          stableConnectionTimerRef.current = null;
+        }, STABLE_CONNECTION_MS);
         if (lastSeqRef.current > 0) void recoverRef.current(lastSeqRef.current);
       };
       ws.onmessage = (event) => {
@@ -209,6 +220,8 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
         if (disposed || wsRef.current !== ws) return;
         if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
         connectionTimeoutRef.current = null;
+        if (stableConnectionTimerRef.current) clearTimeout(stableConnectionTimerRef.current);
+        stableConnectionTimerRef.current = null;
         wsRef.current = null;
         if (event.code === 1000 && event.reason === 'page left') {
           setConnection('closed');
@@ -246,6 +259,8 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
       reconnectTimerRef.current = null;
       if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
       connectionTimeoutRef.current = null;
+      if (stableConnectionTimerRef.current) clearTimeout(stableConnectionTimerRef.current);
+      stableConnectionTimerRef.current = null;
       const ws = wsRef.current;
       wsRef.current = null;
       if (ws) {
