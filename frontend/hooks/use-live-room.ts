@@ -7,7 +7,7 @@ import type { ConnectionState, DanmakuMessage } from '@/lib/types';
 
 const MAX_MESSAGES = 500;
 
-type LikeSendState = 'idle' | 'sending' | 'accepted' | 'error';
+type LikeSendState = 'idle' | 'accepted' | 'error';
 
 function createMessageID() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -93,7 +93,10 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
 
   const recover = useCallback(async (afterSeq = lastSeqRef.current) => {
     if (recoveringRef.current || !roomId) return;
-    recoveringRef.current = true; setConnection((value) => value === 'open' ? 'recovering' : value);
+    // 补拉是已建立 WebSocket 后的后台同步，不能把可发送的连接临时标成
+    // recovering。热点房间每秒补拉一次，若在这里切换 connection，依赖
+    // connection 的点赞和弹幕按钮就会每秒禁用/启用一次，造成持续闪烁。
+    recoveringRef.current = true;
     try {
       let cursor = afterSeq;
       for (let page = 0; page < 20; page++) {
@@ -104,7 +107,7 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
       }
       setError('');
     } catch (err) { setError(err instanceof Error ? `补拉失败：${err.message}` : '补拉失败'); }
-    finally { recoveringRef.current = false; setConnection((value) => value === 'recovering' ? 'open' : value); }
+    finally { recoveringRef.current = false; }
   }, [apiBase, append, roomId]);
 
   useEffect(() => {
@@ -143,7 +146,7 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
               const timer = pendingLikeTimersRef.current.get(message.message_id);
               if (timer) clearTimeout(timer);
               pendingLikeTimersRef.current.delete(message.message_id);
-              showLikeState('accepted', 1200);
+              showLikeState('accepted', 700);
             }
           } else if (message.type === 'error') {
             if (message.message_id && removePendingLike(message.message_id)) showLikeState('error', 2000);
@@ -212,7 +215,9 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
     if (type === 'like') {
       pendingLikesRef.current.set(messageID, false);
       setOptimisticLikeCount((count) => count + 1);
-      showLikeState('sending');
+      // 连续点赞采用即时反馈；accepted/error 仍用于最终确认或回滚，
+      // 但不让网络与 Kafka 延迟把按钮长期卡在“发送中”。
+      showLikeState('accepted', 700);
     }
     try {
       wsRef.current.send(JSON.stringify({ type, message_id: messageID, content }));
