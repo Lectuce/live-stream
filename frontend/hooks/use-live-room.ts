@@ -8,6 +8,7 @@ import type { ConnectionState, DanmakuMessage } from '@/lib/types';
 const MAX_MESSAGES = 500;
 const CONNECTION_TIMEOUT_MS = 8000;
 const STABLE_CONNECTION_MS = 10000;
+const LIVE_STREAM_SUBPROTOCOL = 'vite-live-stream-v1';
 
 type LikeSendState = 'idle' | 'accepted' | 'error';
 
@@ -159,7 +160,13 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
       const current = wsRef.current;
       if (current && (current.readyState === WebSocket.CONNECTING || current.readyState === WebSocket.OPEN)) return;
       setConnection('connecting');
-      const ws = new WebSocket(`${toWebSocketBase(apiBase)}/api/v1/ws?room_id=${roomId}`);
+      // The Cloudflare development plugin and Vite's /api proxy both listen
+      // for HTTP upgrades. This application subprotocol makes Cloudflare leave
+      // the socket to Vite's proxy instead of destroying the proxied stream.
+      const ws = new WebSocket(
+        `${toWebSocketBase(apiBase)}/api/v1/ws?room_id=${roomId}`,
+        LIVE_STREAM_SUBPROTOCOL,
+      );
       wsRef.current = ws;
       connectionTimeoutRef.current = setTimeout(() => {
         if (disposed || wsRef.current !== ws || ws.readyState !== WebSocket.CONNECTING) return;

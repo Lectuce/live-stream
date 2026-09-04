@@ -33,6 +33,7 @@ func checkOrigin(r *http.Request) bool {
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+	Subprotocols:    []string{"vite-live-stream-v1"},
 
 	CheckOrigin: checkOrigin,
 }
@@ -88,5 +89,9 @@ func ServeWs(hub *Hub, c *gin.Context) {
 	client := NewClient(hub, conn, rid, uid, uname, room.LikeCount)
 	client.hub.register <- client
 	go client.writePump()
-	go client.readPump()
+
+	// Keep the upgraded connection owned by this handler until the peer leaves.
+	// Only the writer needs a separate goroutine; readPump is the single reader
+	// and performs the connection cleanup/unregister work when it returns.
+	client.readPump()
 }
