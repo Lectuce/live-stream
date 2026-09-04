@@ -6,5 +6,6 @@ import { LiveRoom } from '@/components/live-room';
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
   const roomId = Number(params.id);
-  return <LiveRoom roomId={Number.isFinite(roomId) ? roomId : 0} />;
+  const safeRoomId = Number.isFinite(roomId) ? roomId : 0;
+  return <LiveRoom key={safeRoomId} roomId={safeRoomId} />;
 }

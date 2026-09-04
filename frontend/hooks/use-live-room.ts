@@ -34,8 +34,8 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
   const recoveringRef = useRef(false);
-  const stoppedRef = useRef(false);
   const pendingLikesRef = useRef(new Map<string, boolean>());
+  const pendingLikeTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const serverLikeCountRef = useRef(Math.max(0, initialLikeCount));
   const likeFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -51,6 +51,9 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
   }, []);
 
   const removePendingLike = useCallback((messageID: string) => {
+    const timer = pendingLikeTimersRef.current.get(messageID);
+    if (timer) clearTimeout(timer);
+    pendingLikeTimersRef.current.delete(messageID);
     if (!pendingLikesRef.current.delete(messageID)) return false;
     setOptimisticLikeCount((count) => Math.max(0, count - 1));
     return true;
@@ -65,6 +68,9 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
 
     let reconciled = 0;
     for (const messageID of pendingLikesRef.current.keys()) {
+      const timer = pendingLikeTimersRef.current.get(messageID);
+      if (timer) clearTimeout(timer);
+      pendingLikeTimersRef.current.delete(messageID);
       pendingLikesRef.current.delete(messageID);
       reconciled++;
       if (reconciled >= increase) break;
@@ -103,25 +109,24 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
 
   useEffect(() => {
     if (!enabled || !roomId) return;
-    stoppedRef.current = false;
+    let disposed = false;
     const connect = () => {
-      if (stoppedRef.current) return;
+      if (disposed) return;
       setConnection('connecting');
       const ws = new WebSocket(`${toWebSocketBase(apiBase)}/api/v1/ws?room_id=${roomId}`);
       wsRef.current = ws;
       ws.onopen = () => {
+        if (disposed || wsRef.current !== ws) return;
         reconnectAttemptRef.current = 0;
         setConnection('open'); setError('');
         if (lastSeqRef.current > 0) void recover(lastSeqRef.current);
       };
       ws.onmessage = (event) => {
+        if (disposed || wsRef.current !== ws) return;
         try {
           const message = JSON.parse(event.data) as DanmakuMessage & { after_seq?: number; latest_seq?: number; msg?: string };
           if (message.type === 'danma') {
-            const sequence = message.room_seq || 0;
-            const previous = lastSeqRef.current;
             append([message]);
-            if (sequence && previous && sequence > previous + 1) void recover(previous);
           } else if (message.type === 'system') {
             const subtype = message.data?.sub_type;
             if (subtype === 'room_state') {
@@ -135,6 +140,9 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
           } else if (message.type === 'accepted') {
             if (message.message_id && pendingLikesRef.current.has(message.message_id)) {
               pendingLikesRef.current.set(message.message_id, true);
+              const timer = pendingLikeTimersRef.current.get(message.message_id);
+              if (timer) clearTimeout(timer);
+              pendingLikeTimersRef.current.delete(message.message_id);
               showLikeState('accepted', 1200);
             }
           } else if (message.type === 'error') {
@@ -143,12 +151,18 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
           }
         } catch { setError('收到无法解析的 WebSocket 消息'); }
       };
-      ws.onerror = () => setConnection('error');
+      ws.onerror = () => {
+        if (!disposed && wsRef.current === ws) setConnection('error');
+      };
       ws.onclose = () => {
-        if (wsRef.current === ws) wsRef.current = null;
+        if (disposed || wsRef.current !== ws) return;
+        wsRef.current = null;
         let rolledBack = 0;
         for (const [messageID, accepted] of pendingLikesRef.current) {
           if (accepted) continue;
+          const timer = pendingLikeTimersRef.current.get(messageID);
+          if (timer) clearTimeout(timer);
+          pendingLikeTimersRef.current.delete(messageID);
           pendingLikesRef.current.delete(messageID);
           rolledBack++;
         }
@@ -157,18 +171,28 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
           showLikeState('error', 2000);
           setError('实时连接已断开，未确认的点赞未计入');
         }
-        if (stoppedRef.current) { setConnection('closed'); return; }
         setConnection('connecting');
         const delay = Math.min(8000, 500 * 2 ** reconnectAttemptRef.current++);
-        reconnectTimerRef.current = setTimeout(connect, delay);
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null;
+          connect();
+        }, delay);
       };
     };
     connect();
     return () => {
-      stoppedRef.current = true;
+      disposed = true;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      wsRef.current?.close(1000, 'page left');
+      reconnectTimerRef.current = null;
+      const ws = wsRef.current;
       wsRef.current = null;
+      if (ws) {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        ws.close(1000, 'page left');
+      }
     };
   }, [apiBase, append, applyLikeCount, enabled, recover, removePendingLike, roomId, showLikeState]);
 
@@ -192,6 +216,15 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
     }
     try {
       wsRef.current.send(JSON.stringify({ type, message_id: messageID, content }));
+      if (type === 'like') {
+        const timer = setTimeout(() => {
+          pendingLikeTimersRef.current.delete(messageID);
+          if (!removePendingLike(messageID)) return;
+          showLikeState('error', 2000);
+          setError('点赞确认超时，请稍后重试');
+        }, 8000);
+        pendingLikeTimersRef.current.set(messageID, timer);
+      }
       setError('');
       return true;
     } catch (sendError) {
@@ -210,8 +243,11 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
   }, [initialLikeCount]);
 
   useEffect(() => {
+    const pendingLikeTimers = pendingLikeTimersRef.current;
     return () => {
       if (likeFeedbackTimerRef.current) clearTimeout(likeFeedbackTimerRef.current);
+      for (const timer of pendingLikeTimers.values()) clearTimeout(timer);
+      pendingLikeTimers.clear();
     };
   }, []);
 
