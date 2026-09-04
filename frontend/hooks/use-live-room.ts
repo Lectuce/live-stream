@@ -7,19 +7,73 @@ import type { ConnectionState, DanmakuMessage } from '@/lib/types';
 
 const MAX_MESSAGES = 500;
 
-export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean) {
+type LikeSendState = 'idle' | 'sending' | 'accepted' | 'error';
+
+function createMessageID() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
+  else for (let index = 0; index < bytes.length; index++) bytes[index] = Math.floor(Math.random() * 256);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, initialLikeCount = 0) {
   const [messages, setMessages] = useState<DanmakuMessage[]>([]);
   const [connection, setConnection] = useState<ConnectionState>('closed');
   const [onlineCount, setOnlineCount] = useState(0);
   const [likeCount, setLikeCount] = useState(0);
   const [deliveryMode, setDeliveryMode] = useState<'push' | 'sampled'>('push');
   const [error, setError] = useState('');
+  const [optimisticLikeCount, setOptimisticLikeCount] = useState(0);
+  const [likeSendState, setLikeSendState] = useState<LikeSendState>('idle');
   const wsRef = useRef<WebSocket | null>(null);
   const lastSeqRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
   const recoveringRef = useRef(false);
   const stoppedRef = useRef(false);
+  const pendingLikesRef = useRef(new Map<string, boolean>());
+  const serverLikeCountRef = useRef(Math.max(0, initialLikeCount));
+  const likeFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showLikeState = useCallback((state: LikeSendState, resetAfter = 0) => {
+    if (likeFeedbackTimerRef.current) clearTimeout(likeFeedbackTimerRef.current);
+    setLikeSendState(state);
+    if (resetAfter > 0) {
+      likeFeedbackTimerRef.current = setTimeout(() => {
+        setLikeSendState('idle');
+        likeFeedbackTimerRef.current = null;
+      }, resetAfter);
+    }
+  }, []);
+
+  const removePendingLike = useCallback((messageID: string) => {
+    if (!pendingLikesRef.current.delete(messageID)) return false;
+    setOptimisticLikeCount((count) => Math.max(0, count - 1));
+    return true;
+  }, []);
+
+  const applyLikeCount = useCallback((nextCount: number) => {
+    const normalized = Math.max(0, nextCount);
+    const increase = Math.max(0, normalized - serverLikeCountRef.current);
+    serverLikeCountRef.current = normalized;
+    setLikeCount(normalized);
+    if (increase === 0 || pendingLikesRef.current.size === 0) return;
+
+    let reconciled = 0;
+    for (const messageID of pendingLikesRef.current.keys()) {
+      pendingLikesRef.current.delete(messageID);
+      reconciled++;
+      if (reconciled >= increase) break;
+    }
+    if (reconciled > 0) {
+      setOptimisticLikeCount((count) => Math.max(0, count - reconciled));
+      showLikeState('accepted', 1200);
+    }
+  }, [showLikeState]);
 
   const append = useCallback((incoming: DanmakuMessage[]) => {
     if (!incoming.length) return;
@@ -72,18 +126,37 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean) {
             const subtype = message.data?.sub_type;
             if (subtype === 'room_state') {
               setOnlineCount(Number(message.data?.online_count || 0));
-              setLikeCount(Number(message.data?.like_count || 0));
+              applyLikeCount(Number(message.data?.like_count || 0));
             } else if (subtype === 'delivery_policy') {
               setDeliveryMode(message.data?.delivery_mode === 'sampled' ? 'sampled' : 'push');
             }
           } else if (message.type === 'resync_required') {
             void recover(Number(message.after_seq || lastSeqRef.current));
-          } else if (message.type === 'error') setError(message.msg || 'WebSocket 消息处理失败');
+          } else if (message.type === 'accepted') {
+            if (message.message_id && pendingLikesRef.current.has(message.message_id)) {
+              pendingLikesRef.current.set(message.message_id, true);
+              showLikeState('accepted', 1200);
+            }
+          } else if (message.type === 'error') {
+            if (message.message_id && removePendingLike(message.message_id)) showLikeState('error', 2000);
+            setError(message.msg || 'WebSocket 消息处理失败');
+          }
         } catch { setError('收到无法解析的 WebSocket 消息'); }
       };
       ws.onerror = () => setConnection('error');
       ws.onclose = () => {
         if (wsRef.current === ws) wsRef.current = null;
+        let rolledBack = 0;
+        for (const [messageID, accepted] of pendingLikesRef.current) {
+          if (accepted) continue;
+          pendingLikesRef.current.delete(messageID);
+          rolledBack++;
+        }
+        if (rolledBack > 0) {
+          setOptimisticLikeCount((count) => Math.max(0, count - rolledBack));
+          showLikeState('error', 2000);
+          setError('实时连接已断开，未确认的点赞未计入');
+        }
         if (stoppedRef.current) { setConnection('closed'); return; }
         setConnection('connecting');
         const delay = Math.min(8000, 500 * 2 ** reconnectAttemptRef.current++);
@@ -97,7 +170,7 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean) {
       wsRef.current?.close(1000, 'page left');
       wsRef.current = null;
     };
-  }, [apiBase, append, enabled, recover, roomId]);
+  }, [apiBase, append, applyLikeCount, enabled, recover, removePendingLike, roomId, showLikeState]);
 
   useEffect(() => {
     if (!enabled || deliveryMode !== 'sampled') return;
@@ -106,10 +179,42 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean) {
   }, [deliveryMode, enabled, recover]);
 
   const send = useCallback((type: 'danma' | 'like', content = '') => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return false;
-    wsRef.current.send(JSON.stringify({ type, message_id: crypto.randomUUID(), content }));
-    return true;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      setError('实时连接尚未建立，请稍后再试');
+      if (type === 'like') showLikeState('error', 2000);
+      return false;
+    }
+    const messageID = createMessageID();
+    if (type === 'like') {
+      pendingLikesRef.current.set(messageID, false);
+      setOptimisticLikeCount((count) => count + 1);
+      showLikeState('sending');
+    }
+    try {
+      wsRef.current.send(JSON.stringify({ type, message_id: messageID, content }));
+      setError('');
+      return true;
+    } catch (sendError) {
+      if (type === 'like') {
+        removePendingLike(messageID);
+        showLikeState('error', 2000);
+      }
+      setError(sendError instanceof Error ? `消息发送失败：${sendError.message}` : '消息发送失败');
+      return false;
+    }
+  }, [removePendingLike, showLikeState]);
+
+  useEffect(() => {
+    const normalized = Math.max(0, initialLikeCount);
+    if (normalized > serverLikeCountRef.current) serverLikeCountRef.current = normalized;
+  }, [initialLikeCount]);
+
+  useEffect(() => {
+    return () => {
+      if (likeFeedbackTimerRef.current) clearTimeout(likeFeedbackTimerRef.current);
+    };
   }, []);
 
-  return { messages, appendMessages: append, connection, onlineCount, likeCount, deliveryMode, error, send, recover };
+  const displayedLikeCount = Math.max(likeCount, initialLikeCount) + optimisticLikeCount;
+  return { messages, appendMessages: append, connection, onlineCount, likeCount: displayedLikeCount, deliveryMode, error, send, recover, likeSendState };
 }
