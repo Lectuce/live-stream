@@ -10,6 +10,24 @@ const CONNECTION_TIMEOUT_MS = 8000;
 
 type LikeSendState = 'idle' | 'accepted' | 'error';
 
+function describeWebSocketClose(event: CloseEvent) {
+  const suffix = event.reason ? `（${event.reason}）` : '';
+  switch (event.code) {
+    case 1000:
+      return `WebSocket 被正常关闭${suffix}`;
+    case 1001:
+      return `服务端或代理正在退出${suffix}`;
+    case 1006:
+      return 'WebSocket 异常断开（1006），通常是代理、网络或服务进程中断';
+    case 4001:
+      return event.reason === 'control_queue_full'
+        ? '控制消息发送队列持续拥塞，服务端关闭了连接'
+        : '连接发送队列持续拥塞，服务端要求重新同步';
+    default:
+      return `WebSocket 已断开（${event.code}）${suffix}`;
+  }
+}
+
 function createMessageID() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   const bytes = new Uint8Array(16);
@@ -112,11 +130,29 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
     finally { recoveringRef.current = false; }
   }, [apiBase, append, roomId]);
 
+  // Message/recovery callbacks may evolve with room state, but those changes
+  // must not tear down a healthy socket. Keep the connection effect dependent
+  // only on values that identify the connection itself.
+  const appendRef = useRef(append);
+  const applyLikeCountRef = useRef(applyLikeCount);
+  const recoverRef = useRef(recover);
+  const removePendingLikeRef = useRef(removePendingLike);
+  const showLikeStateRef = useRef(showLikeState);
+  useEffect(() => {
+    appendRef.current = append;
+    applyLikeCountRef.current = applyLikeCount;
+    recoverRef.current = recover;
+    removePendingLikeRef.current = removePendingLike;
+    showLikeStateRef.current = showLikeState;
+  }, [append, applyLikeCount, recover, removePendingLike, showLikeState]);
+
   useEffect(() => {
     if (!enabled || !roomId) return;
     let disposed = false;
     const connect = () => {
       if (disposed) return;
+      const current = wsRef.current;
+      if (current && (current.readyState === WebSocket.CONNECTING || current.readyState === WebSocket.OPEN)) return;
       setConnection('connecting');
       const ws = new WebSocket(`${toWebSocketBase(apiBase)}/api/v1/ws?room_id=${roomId}`);
       wsRef.current = ws;
@@ -132,34 +168,34 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
         connectionTimeoutRef.current = null;
         reconnectAttemptRef.current = 0;
         setConnection('open'); setError('');
-        if (lastSeqRef.current > 0) void recover(lastSeqRef.current);
+        if (lastSeqRef.current > 0) void recoverRef.current(lastSeqRef.current);
       };
       ws.onmessage = (event) => {
         if (disposed || wsRef.current !== ws) return;
         try {
           const message = JSON.parse(event.data) as DanmakuMessage & { after_seq?: number; latest_seq?: number; msg?: string };
           if (message.type === 'danma') {
-            append([message]);
+            appendRef.current([message]);
           } else if (message.type === 'system') {
             const subtype = message.data?.sub_type;
             if (subtype === 'room_state') {
               setOnlineCount(Number(message.data?.online_count || 0));
-              applyLikeCount(Number(message.data?.like_count || 0));
+              applyLikeCountRef.current(Number(message.data?.like_count || 0));
             } else if (subtype === 'delivery_policy') {
               setDeliveryMode(message.data?.delivery_mode === 'sampled' ? 'sampled' : 'push');
             }
           } else if (message.type === 'resync_required') {
-            void recover(Number(message.after_seq || lastSeqRef.current));
+            void recoverRef.current(Number(message.after_seq || lastSeqRef.current));
           } else if (message.type === 'accepted') {
             if (message.message_id && pendingLikesRef.current.has(message.message_id)) {
               pendingLikesRef.current.set(message.message_id, true);
               const timer = pendingLikeTimersRef.current.get(message.message_id);
               if (timer) clearTimeout(timer);
               pendingLikeTimersRef.current.delete(message.message_id);
-              showLikeState('accepted', 700);
+              showLikeStateRef.current('accepted', 700);
             }
           } else if (message.type === 'error') {
-            if (message.message_id && removePendingLike(message.message_id)) showLikeState('error', 2000);
+            if (message.message_id && removePendingLikeRef.current(message.message_id)) showLikeStateRef.current('error', 2000);
             setError(message.msg || 'WebSocket 消息处理失败');
           }
         } catch { setError('收到无法解析的 WebSocket 消息'); }
@@ -169,11 +205,15 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
         setConnection('error');
         setError('WebSocket 连接失败，请检查前端地址是否在后端 allowed_origins 中');
       };
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         if (disposed || wsRef.current !== ws) return;
         if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
         connectionTimeoutRef.current = null;
         wsRef.current = null;
+        if (event.code === 1000 && event.reason === 'page left') {
+          setConnection('closed');
+          return;
+        }
         let rolledBack = 0;
         for (const [messageID, accepted] of pendingLikesRef.current) {
           if (accepted) continue;
@@ -185,11 +225,13 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
         }
         if (rolledBack > 0) {
           setOptimisticLikeCount((count) => Math.max(0, count - rolledBack));
-          showLikeState('error', 2000);
-          setError('实时连接已断开，未确认的点赞未计入');
+          showLikeStateRef.current('error', 2000);
         }
         setConnection('error');
-        setError((current) => current || '实时连接已断开，正在尝试重连');
+        const closeMessage = describeWebSocketClose(event);
+        setError(rolledBack > 0
+          ? `${closeMessage}；未确认的点赞未计入，正在尝试重连`
+          : `${closeMessage}，正在尝试重连`);
         const delay = Math.min(8000, 500 * 2 ** reconnectAttemptRef.current++);
         reconnectTimerRef.current = setTimeout(() => {
           reconnectTimerRef.current = null;
@@ -214,7 +256,7 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
         ws.close(1000, 'page left');
       }
     };
-  }, [apiBase, append, applyLikeCount, enabled, recover, removePendingLike, roomId, showLikeState]);
+  }, [apiBase, enabled, roomId]);
 
   useEffect(() => {
     if (!enabled || deliveryMode !== 'sampled') return;

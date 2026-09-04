@@ -1,7 +1,7 @@
 import { sites } from '@openai/sites-vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
-import { defineConfig, type ProxyOptions } from 'vite';
+import { defineConfig, loadEnv, type ProxyOptions } from 'vite';
 import hostingConfig from './.openai/hosting.json';
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
@@ -34,7 +34,7 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ mode }) => {
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= 'false';
@@ -44,8 +44,12 @@ export default defineConfig(async () => {
   // Wrangler snapshots its log path while the Cloudflare plugin is imported.
   const { cloudflare } = await import('@cloudflare/vite-plugin');
 
-  const backendTarget = process.env.LIVE_STREAM_BACKEND_URL || 'http://127.0.0.1:9000';
-  const websocketOrigin = process.env.LIVE_STREAM_WEBSOCKET_ORIGIN || 'http://localhost:3000';
+  // Vite loads .env files after config evaluation unless loadEnv is called
+  // explicitly. Read them here so a remote backend configured in .env.local
+  // does not silently fall back to the frontend machine's 127.0.0.1:9000.
+  const env = loadEnv(mode, process.cwd(), 'LIVE_STREAM_');
+  const backendTarget = process.env.LIVE_STREAM_BACKEND_URL || env.LIVE_STREAM_BACKEND_URL || 'http://127.0.0.1:9000';
+  const websocketOrigin = process.env.LIVE_STREAM_WEBSOCKET_ORIGIN || env.LIVE_STREAM_WEBSOCKET_ORIGIN || 'http://localhost:3000';
   const apiProxy: ProxyOptions = {
     target: backendTarget,
     changeOrigin: true,

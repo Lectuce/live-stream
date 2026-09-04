@@ -17,9 +17,11 @@ import (
 )
 
 const (
-	writeWait         = 10 * time.Second
-	pongWait          = 60 * time.Second
-	pingPeriod        = pongWait * 9 / 10
+	writeWait = 10 * time.Second
+	pongWait  = 60 * time.Second
+	// Keep the connection active before common 30-second reverse-proxy/NAT idle
+	// timeouts. Browsers answer WebSocket Ping frames with Pong automatically.
+	pingPeriod        = 20 * time.Second
 	clientQueueSize   = 256
 	controlQueueSize  = 8
 	gapNoticeInterval = 5 * time.Second
@@ -265,6 +267,7 @@ func (c *Client) readPump() {
 	}()
 
 	if err := c.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+		log.Printf("websocket set read deadline failed: room_id=%d connection_id=%d err=%v", c.RoomID, c.connectionID, err)
 		return
 	}
 	c.conn.SetPongHandler(func(string) error {
@@ -275,6 +278,19 @@ func (c *Client) readPump() {
 		var msg Message
 		err := c.conn.ReadJSON(&msg)
 		if err != nil {
+			if !c.isClosing() {
+				if closeErr, ok := err.(*websocket.CloseError); ok {
+					log.Printf(
+						"websocket peer closed: room_id=%d connection_id=%d code=%d reason=%q",
+						c.RoomID,
+						c.connectionID,
+						closeErr.Code,
+						closeErr.Text,
+					)
+				} else {
+					log.Printf("websocket read failed: room_id=%d connection_id=%d err=%v", c.RoomID, c.connectionID, err)
+				}
+			}
 			break
 		}
 
@@ -467,9 +483,18 @@ func (c *Client) writePump() {
 
 	writePrepared := func(message *websocket.PreparedMessage) bool {
 		if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+			if !c.isClosing() {
+				log.Printf("websocket set write deadline failed: room_id=%d connection_id=%d err=%v", c.RoomID, c.connectionID, err)
+			}
 			return false
 		}
-		return c.conn.WritePreparedMessage(message) == nil
+		if err := c.conn.WritePreparedMessage(message); err != nil {
+			if !c.isClosing() {
+				log.Printf("websocket write failed: room_id=%d connection_id=%d err=%v", c.RoomID, c.connectionID, err)
+			}
+			return false
+		}
+		return true
 	}
 
 	for dataChannel != nil || controlChannel != nil || stateChannel != nil {
@@ -550,6 +575,7 @@ func (c *Client) writePump() {
 			if err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)); err != nil {
 				if !c.isClosing() {
 					c.hub.metrics.writeErrorsTotal.Add(1)
+					log.Printf("websocket ping failed: room_id=%d connection_id=%d err=%v", c.RoomID, c.connectionID, err)
 				}
 				return
 			}
