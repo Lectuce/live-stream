@@ -46,7 +46,7 @@
                └── 弹幕历史 → MySQL 批量持久化
 ```
 
-生产者以 `room_id` 作为 Kafka Key，使同一房间稳定落到同一分区。发送端收到 `accepted` 时表示消息已得到 Kafka 确认；实时展示不等待 MySQL，从而避免数据库抖动阻塞直播链路。详细协议见 [弹幕实时与恢复协议](docs/reliable-danmaku-protocol.md)。
+生产者以 `room_id` 作为 Kafka Key，使同一房间稳定落到同一分区。发送端收到 `accepted` 时表示消息已得到 Kafka 确认；实时展示不等待 MySQL，从而避免数据库抖动阻塞直播链路。消息格式和客户端交互方式见本文的“WebSocket 协议”章节及 [弹幕实时与恢复协议](docs/reliable-danmaku-protocol.md)。
 
 ## 快速开始
 
@@ -230,7 +230,27 @@ pnpm build
 bash ./scripts/full-test.sh --profile Functional --skip-frontend-checks
 ```
 
-测试脚本还提供 `Smoke`、`Standard`、`Stress` 和 `Extreme` 分级压测，其中高等级测试会消耗大量 CPU、网络和数据库资源，只应在专用环境运行。完整参数、覆盖范围和报告格式见 [全套自动化测试指南](docs/testing/full-automated-test-guide.md) 与 [负载测试指南](docs/load-testing-guide.md)。
+测试脚本提供以下执行档位：
+
+| Profile | 覆盖范围 |
+|---|---|
+| `Functional` | API、Session、房间权限、WebSocket、持久化、历史消息与点赞 |
+| `Smoke` | 功能检查及 100 个连接的基础压测 |
+| `Standard` | 依次测试 100 和 1,000 个连接 |
+| `Stress` | 依次测试 1,000 和 5,000 个连接 |
+| `Extreme` | 最高测试 10,000 个连接 |
+
+`Stress` 和 `Extreme` 会消耗大量 CPU、网络和数据库资源，只应在专用环境运行。可通过下面的命令查看脚本参数：
+
+```powershell
+Get-Help .\scripts\full-test.ps1 -Detailed
+```
+
+```bash
+bash ./scripts/full-test.sh --help
+```
+
+每次全量测试会在 `test-results/` 中生成 JSON 和 Markdown 报告；功能断言或压测阈值失败时，脚本会返回非零退出码。
 
 ## 可观测性
 
@@ -266,13 +286,14 @@ pprof 入口为 `http://127.0.0.1:6060/debug/pprof/`。核心指标覆盖广播�
 ├── cmd/e2e/                   # WebSocket 协议 E2E 工具
 ├── scripts/                   # 自动化测试与压测脚本
 ├── web/danmaku-client.js      # 独立浏览器客户端参考实现
-└── docs/                      # 协议、测试与项目复盘文档
+└── docs/                      # 开发、协议与测试文档
 ```
 
-## 延伸阅读
+## 相关说明
 
+- [前端启动与局域网配置](frontend/README.md)
+- [WebSocket 压测工具](cmd/benchmark/README.md)
 - [后端开发指南](docs/backend-development-guide.md)
 - [弹幕实时与恢复协议](docs/reliable-danmaku-protocol.md)
 - [负载测试指南](docs/load-testing-guide.md)
 - [全套自动化测试指南](docs/testing/full-automated-test-guide.md)
-- [项目复盘](docs/deep-dive/2026-09-02-live-stream-project-review.md)
