@@ -49,7 +49,7 @@ export function RoomStudio({ onChanged }: { onChanged: () => void | Promise<void
   }
 
   if (authLoading) return <div className="h-28 animate-pulse rounded-xl bg-white/4" />;
-  if (!user) return <div className="flex flex-col justify-between gap-5 rounded-xl border border-white/8 bg-[#0e1117] p-5 sm:flex-row sm:items-center"><div><p className="text-xs font-semibold tracking-[.13em] text-white/35">CREATOR STUDIO</p><h2 className="mt-2 text-xl font-bold">登录后创建你的直播间</h2><p className="mt-1 text-sm text-white/40">直播间归属由 Session 决定，不会相信客户端传入的 owner_id。</p></div><div className="flex size-12 shrink-0 items-center justify-center rounded-xl border border-white/8 bg-white/4"><Radio className="text-[#ff6255]" /></div></div>;
+  if (!user) return <div className="flex flex-col justify-between gap-5 rounded-xl border border-white/8 bg-[#0e1117] p-5 sm:flex-row sm:items-center"><div><p className="text-xs font-semibold tracking-[.13em] text-white/35">CREATOR STUDIO</p><h2 className="mt-2 text-xl font-bold">登录后创建你的直播间</h2><p className="mt-1 text-sm text-white/40">拥有自己的直播空间，随时开播并与观众互动。</p></div><div className="flex size-12 shrink-0 items-center justify-center rounded-xl border border-white/8 bg-white/4"><Radio className="text-[#ff6255]" /></div></div>;
 
   return (
     <>

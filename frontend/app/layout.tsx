@@ -4,7 +4,7 @@ import { AuthProvider } from '@/components/auth-provider';
 
 export const metadata: Metadata = {
   title: 'LIVE NOW · 实时直播间',
-  description: '基于 Gin、WebSocket、Kafka 与 Redis 的实时直播弹幕前端',
+  description: '发现精彩直播，与主播和观众实时互动',
 };
 
 export default function RootLayout({

@@ -15,7 +15,7 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
       headers,
     });
   } catch {
-    throw new ApiError('无法连接后端，请检查服务地址和 9000 端口', 0);
+    throw new ApiError('暂时无法加载内容，请稍后重试', 0);
   }
   const body = await response.json().catch(() => ({ message: `HTTP ${response.status}` })) as { message?: string; msg?: string };
   if (!response.ok) throw new ApiError(body.message || body.msg || '请求失败', response.status);

@@ -13,20 +13,19 @@ const LIVE_STREAM_SUBPROTOCOL = 'vite-live-stream-v1';
 type LikeSendState = 'idle' | 'accepted' | 'error';
 
 function describeWebSocketClose(event: CloseEvent) {
-  const suffix = event.reason ? `（${event.reason}）` : '';
   switch (event.code) {
     case 1000:
-      return `WebSocket 被正常关闭${suffix}`;
+      return '直播互动已结束';
     case 1001:
-      return `服务端或代理正在退出${suffix}`;
+      return '直播互动暂时关闭';
     case 1006:
-      return 'WebSocket 异常断开（1006），通常是代理、网络或服务进程中断';
+      return '直播互动意外中断';
     case 4001:
       return event.reason === 'control_queue_full'
-        ? '控制消息发送队列持续拥塞，服务端关闭了连接'
-        : '连接发送队列持续拥塞，服务端要求重新同步';
+        ? '当前互动人数较多，连接已暂时中断'
+        : '消息同步繁忙，正在重新加入';
     default:
-      return `WebSocket 已断开（${event.code}）${suffix}`;
+      return '直播互动已中断';
   }
 }
 
@@ -131,8 +130,8 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
       // A successful replay only clears an earlier replay failure. It must not
       // erase a WebSocket disconnect error, otherwise the one-second sampled
       // replay loop makes the connection warning flash on and off.
-      setError((current) => current.startsWith('补拉失败：') || current === '补拉失败' ? '' : current);
-    } catch (err) { setError(err instanceof Error ? `补拉失败：${err.message}` : '补拉失败'); }
+      setError((current) => current === '消息同步失败，请稍后重试' ? '' : current);
+    } catch { setError('消息同步失败，请稍后重试'); }
     finally { recoveringRef.current = false; }
   }, [apiBase, append, roomId]);
 
@@ -171,7 +170,7 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
       connectionTimeoutRef.current = setTimeout(() => {
         if (disposed || wsRef.current !== ws || ws.readyState !== WebSocket.CONNECTING) return;
         setConnection('error');
-        setError('实时连接超时，请检查后端地址和 WebSocket Origin 白名单');
+        setError('加入直播互动超时，请稍后重试');
         ws.close();
       }, CONNECTION_TIMEOUT_MS);
       ws.onopen = () => {
@@ -214,14 +213,14 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
             }
           } else if (message.type === 'error') {
             if (message.message_id && removePendingLikeRef.current(message.message_id)) showLikeStateRef.current('error', 2000);
-            setError(message.msg || 'WebSocket 消息处理失败');
+            setError(message.msg || '消息处理失败，请稍后重试');
           }
-        } catch { setError('收到无法解析的 WebSocket 消息'); }
+        } catch { setError('收到一条异常消息，请稍后重试'); }
       };
       ws.onerror = () => {
         if (disposed || wsRef.current !== ws) return;
         setConnection('error');
-        setError('WebSocket 连接失败，请检查前端地址是否在后端 allowed_origins 中');
+        setError('暂时无法加入直播互动，请稍后重试');
       };
       ws.onclose = (event) => {
         if (disposed || wsRef.current !== ws) return;
@@ -288,7 +287,7 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
 
   const send = useCallback((type: 'danma' | 'like', content = '') => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      setError('实时连接尚未建立，请稍后再试');
+      setError('互动尚未准备好，请稍后再试');
       if (type === 'like') showLikeState('error', 2000);
       return false;
     }
@@ -296,8 +295,7 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
     if (type === 'like') {
       pendingLikesRef.current.set(messageID, false);
       setOptimisticLikeCount((count) => count + 1);
-      // 连续点赞采用即时反馈；accepted/error 仍用于最终确认或回滚，
-      // 但不让网络与 Kafka 延迟把按钮长期卡在“发送中”。
+      // 连续点赞采用即时反馈；accepted/error 仍用于最终确认或回滚。
       showLikeState('accepted', 700);
     }
     try {

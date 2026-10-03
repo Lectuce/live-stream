@@ -4,3 +4,4 @@ live-stream
 .vscode/
 .env
 /test-results/
+/docs
