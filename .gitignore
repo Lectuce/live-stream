@@ -4,7 +4,8 @@ live-stream
 .vscode/
 .env
 /test-results/
-# 本地项目复盘、求职与面试材料
+
 /docs/autumn-recruitment-project-review.md
+/docs/backend-development-guide.md
 /docs/deep-dive/
 /interview-doc/

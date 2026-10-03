@@ -293,7 +293,6 @@ pprof 入口为 `http://127.0.0.1:6060/debug/pprof/`。核心指标覆盖广播�
 
 - [前端启动与局域网配置](frontend/README.md)
 - [WebSocket 压测工具](cmd/benchmark/README.md)
-- [后端开发指南](docs/backend-development-guide.md)
 - [弹幕实时与恢复协议](docs/reliable-danmaku-protocol.md)
 - [负载测试指南](docs/load-testing-guide.md)
 - [全套自动化测试指南](docs/testing/full-automated-test-guide.md)
