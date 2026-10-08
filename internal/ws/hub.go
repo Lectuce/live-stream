@@ -79,9 +79,8 @@ func (h *Hub) Stop() {
 	h.cancel()
 }
 
-// SnapshotOnlineCounts returns this gateway's current connection count for
-// every locally active room. The hot-ranking worker publishes the snapshot as
-// a short-lived per-instance presence heartbeat in Redis.
+// SnapshotOnlineCounts 返回此网关中每个本地活跃房间的当前连接数。
+// 热度排行协程会将该快照作为实例级短期在线心跳发布到 Redis。
 func (h *Hub) SnapshotOnlineCounts() map[uint64]int {
 	h.mu.Lock()
 	rooms := make(map[uint64]*Room, len(h.rooms))
@@ -132,9 +131,9 @@ func (h *Hub) enqueueBroadcast(msg Message) {
 		h.metrics.broadcastDuration.observe(time.Since(startedAt))
 	}()
 
-	// A room is split by connection, not by message. Every room+shard pair is
-	// always consumed by the same FIFO worker, so one client never observes two
-	// workers racing to enqueue different room messages.
+	// 房间按连接而不是按消息分片。每个“房间+分片”组合始终由同一个
+	// FIFO worker 消费，因此同一客户端不会遇到两个 worker 竞争入队
+	// 不同房间消息的情况。
 	hot := h.roomIsHot(msg.RoomID)
 	for shard := 0; shard < fanoutShardCount; shard++ {
 		queue := h.broadcastQueues[h.broadcastQueueIndex(msg.RoomID, shard)]
@@ -253,9 +252,9 @@ func (h *Hub) handleUnregister(client *Client) {
 	h.markPresenceDirty(client.RoomID)
 }
 
-// markPresenceDirty stores only the latest pending state for each room. A burst
-// of joins/leaves therefore creates one presence update per period, not one
-// room-wide broadcast per connection event.
+// markPresenceDirty 仅保存每个房间最新的待处理状态。因此，短时间内集中发生的
+// 加入/离开事件在每个周期只会产生一次在线状态更新，而不会为每次连接事件
+// 都触发一次全房间广播。
 func (h *Hub) markPresenceDirty(roomID uint64) {
 	h.presenceMu.Lock()
 	h.presenceDirty[roomID] = struct{}{}
@@ -314,8 +313,7 @@ func (h *Hub) broadcastOnlineCount(roomID uint64) {
 			"like_count":   likeCount,
 		},
 	}
-	// Presence is a replaceable state update, so it is deliberately kept out
-	// of the event queue used by danmaku messages.
+	// 在线状态属于可覆盖的状态更新，因此特意不放入弹幕使用的事件队列。
 	h.broadcastStateToRoom(&msg)
 }
 
@@ -499,7 +497,7 @@ func (h *Hub) enqueueClient(
 	case enqueueOK:
 		h.metrics.deliveryEnqueuedTotal.Add(1)
 	case enqueueClosed:
-		// The unregister path already owns cleanup for a closed queue.
+		// 注销流程已经负责清理已关闭的队列。
 	case enqueueDroppedOldest, enqueueFull:
 		h.metrics.queueFullTotal.Add(1)
 		if result == enqueueDroppedOldest {

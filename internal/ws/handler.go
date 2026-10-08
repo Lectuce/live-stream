@@ -90,8 +90,8 @@ func ServeWs(hub *Hub, c *gin.Context) {
 	client.hub.register <- client
 	go client.writePump()
 
-	// Keep the upgraded connection owned by this handler until the peer leaves.
-	// Only the writer needs a separate goroutine; readPump is the single reader
-	// and performs the connection cleanup/unregister work when it returns.
+	// 对端离开前，升级后的连接始终由此处理函数持有。
+	// 只有写入端需要单独的协程；readPump 是唯一的读取端，
+	// 返回时负责清理连接并注销。
 	client.readPump()
 }

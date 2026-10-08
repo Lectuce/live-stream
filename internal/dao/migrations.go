@@ -7,9 +7,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// migrateDanmaSequences is intentionally data-aware. AutoMigrate can add a
-// column, but it cannot give existing rows a stable per-room order before a
-// unique index is created.
+// migrateDanmaSequences 特意设计为感知现有数据。AutoMigrate 可以添加列，
+// 但无法在创建唯一索引前为已有记录生成稳定的房间内顺序。
 func migrateDanmaSequences(db *gorm.DB) error {
 	var missingSequences int64
 	if err := db.Raw(

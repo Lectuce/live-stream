@@ -14,7 +14,7 @@ import (
 func CreateRoom(ctx context.Context, room *model.Room) (*model.Room, error) {
 	// err := gorm.G[model.User](dao.SC.Db).Create(ctx, user)
 	// if err != nil {
-	// 	panic(fmt.Errorf("fatal error create user: %w", err))
+	// 	panic(fmt.Errorf("创建用户失败: %w", err))
 	// }
 	results := gorm.WithResult()
 	err := gorm.G[model.Room](dao.SC.Db, results).Create(ctx, room)
@@ -117,9 +117,9 @@ func SelectActiveRoomHeatSources(ctx context.Context) ([]model.ActiveRoomHeatSou
 	return rooms, nil
 }
 
-// SelectRankedRooms uses the ephemeral Redis hot-score order and enriches the
-// room records from MySQL. Missing/unavailable ranking data degrades to newest
-// live rooms, never back to the historical like_count order.
+// SelectRankedRooms 使用 Redis 中的临时热度分数排序，并从 MySQL 补全房间记录。
+// 排行数据缺失或不可用时降级为按最新开播房间排序，绝不退回按历史
+// like_count 排序。
 func SelectRankedRooms(ctx context.Context, limit int) ([]model.HotRoomDTO, error) {
 	if limit <= 0 {
 		return nil, nil

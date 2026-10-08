@@ -1,6 +1,6 @@
 mysql:
-  user: yujun
-  password: "161413"
+  user: live_stream
+  password: "live_stream_dev"
   host: "127.0.0.1"
   port: 3306
   dbname: live_stream

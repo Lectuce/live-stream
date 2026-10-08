@@ -27,7 +27,7 @@ export function LiveFeedItem({ room, index, total, active, apiBase }: Props) {
     void api.history(apiBase, room.room_id, 0, 20).then((result) => {
       if (!cancelled) appendMessages(result.data.items ?? []);
     }).catch(() => {
-      // The live WebSocket remains useful when history is unavailable.
+      // 即使历史记录不可用，实时 WebSocket 仍然有用。
     });
     return () => { cancelled = true; };
   }, [active, apiBase, room.room_id, appendMessages]);

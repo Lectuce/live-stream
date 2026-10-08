@@ -52,10 +52,10 @@ services:
     ports:
       - "127.0.0.1:3306:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: "161413"
+      MYSQL_ROOT_PASSWORD: "root_dev_only"
       MYSQL_DATABASE: live_stream
-      MYSQL_USER: yujun
-      MYSQL_PASSWORD: "161413"
+      MYSQL_USER: live_stream
+      MYSQL_PASSWORD: "live_stream_dev"
     command:
       - "--bind-address=0.0.0.0"
     volumes:

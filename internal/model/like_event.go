@@ -2,9 +2,9 @@ package model
 
 import "time"
 
-// LikeEvent is retained only to describe the legacy per-click table. New
-// writes use LikeBatch plus LikeAggregationCheckpoint so MySQL no longer
-// stores one row and updates the room hot row for every click.
+// LikeEvent 仅用于描述旧版逐次点赞表。新的写入使用 LikeBatch 和
+// LikeAggregationCheckpoint，使 MySQL 不再为每次点赞都保存一行记录并更新
+// 房间热点行。
 type LikeEvent struct {
 	MessageID string    `json:"message_id" gorm:"primaryKey;size:64"`
 	RoomID    uint64    `json:"room_id" gorm:"index;not null"`

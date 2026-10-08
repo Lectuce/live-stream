@@ -14,7 +14,7 @@ var SC *model.StorageContainer
 func Initdb() {
 	cfg := config.GlobalConfig
 	dsn := cfg.Mysql.DSN()
-	// fmt.Println("===DEBUG DSN:", dsn)
+	// fmt.Println("===调试 DSN:", dsn)
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	SC = &model.StorageContainer{
 		Db: db,
@@ -25,19 +25,19 @@ func Initdb() {
 
 	// if db.Migrator().HasTable(&model.Room{}) {
 	// 	if err := db.Migrator().DropTable(&model.Room{}); err != nil {
-	// 		panic(fmt.Errorf("Database table Room migration failed: %v", err))
+	// 		panic(fmt.Errorf("数据库表 Room 迁移失败: %v", err))
 	// 	}
 	// }
 
 	// if db.Migrator().HasTable(&model.User{}) {
 	// 	if err := db.Migrator().DropTable(&model.User{}); err != nil {
-	// 		panic(fmt.Errorf("Database table User migration failed: %v", err))
+	// 		panic(fmt.Errorf("数据库表 User 迁移失败: %v", err))
 	// 	}
 	// }
 
 	// if db.Migrator().HasTable(&model.Danma{}) {
 	// 	if err := db.Migrator().DropTable(&model.Danma{}); err != nil {
-	// 		panic(fmt.Errorf("Database table Danma migration failed: %v", err))
+	// 		panic(fmt.Errorf("数据库表 Danma 迁移失败: %v", err))
 	// 	}
 	// }
 

@@ -7,8 +7,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// CORS permits credentialed browser clients only from the same allowlist used
-// by the WebSocket Origin check. Unknown origins receive no CORS permission.
+// CORS 仅允许来自 WebSocket Origin 检查所用同一白名单的浏览器客户端携带凭据。
+// 未知来源不会获得任何 CORS 权限。
 func CORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")

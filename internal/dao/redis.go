@@ -77,8 +77,8 @@ func SetRoomLikeCount(ctx context.Context, roomID uint64, count int64) error {
 	return SC.Redis.Set(ctx, key, count, 0).Err()
 }
 
-// SetRoomLikeCounts pipelines absolute counters. Repeating the whole pipeline
-// after a network error is safe because these are SET operations, not INCR.
+// SetRoomLikeCounts 使用流水线写入绝对计数值。网络错误后重试整个流水线是安全的，
+// 因为这里执行的是 SET 而不是 INCR 操作。
 func SetRoomLikeCounts(ctx context.Context, counts map[uint64]int64) error {
 	if len(counts) == 0 {
 		return nil
@@ -148,9 +148,9 @@ end
 return 0
 `)
 
-// ReserveRoomLike atomically combines the short-window abuse guard with a
-// message_id reservation. A client retry with the same UUID does not create a
-// second Kafka record, while a failed Kafka write can release the reservation.
+// ReserveRoomLike 以原子方式组合短窗口防滥用检查和 message_id 预留。
+// 客户端使用相同 UUID 重试时不会创建第二条 Kafka 记录，而 Kafka 写入失败时
+// 可以释放该预留。
 func ReserveRoomLike(
 	ctx context.Context,
 	identity RoomLikeIdentity,
@@ -205,8 +205,8 @@ func ConfirmRoomLike(
 	return nil
 }
 
-// ConfirmRoomLikes repairs the rare window in which Kafka accepted a like but
-// the gateway exited before extending its Redis idempotency reservation.
+// ConfirmRoomLikes 修复一种罕见情况：Kafka 已接受点赞，但网关在延长 Redis
+// 幂等预留期限前退出。
 func ConfirmRoomLikes(
 	ctx context.Context,
 	identities []RoomLikeIdentity,
@@ -277,10 +277,9 @@ end
 return tonumber(current)
 `)
 
-// ReconcileRoomLikeCounts copies the durable MySQL count into Redis. During
-// the first startup after upgrading from the old Redis-only implementation,
-// preserveRedis=true first keeps a larger existing Redis value so deployment
-// does not silently erase legacy likes. Periodic reconciliation uses false.
+// ReconcileRoomLikeCounts 将 MySQL 中的持久化计数复制到 Redis。
+// 从旧版纯 Redis 实现升级后首次启动时，preserveRedis=true 会先保留 Redis 中
+// 较大的现有值，避免部署过程静默清除历史点赞。定期对账时使用 false。
 func ReconcileRoomLikeCounts(ctx context.Context, preserveRedis bool) (int, error) {
 	var rooms []model.Room
 	if err := SC.Db.WithContext(ctx).
@@ -305,8 +304,8 @@ func ReconcileRoomLikeCounts(ctx context.Context, preserveRedis bool) (int, erro
 			}
 		}
 		key := fmt.Sprintf("room:like:%d", rooms[i].RoomID)
-		// Never overwrite a larger value observed after the MySQL snapshot was
-		// read; a concurrent like may already have advanced both stores.
+		// 读取 MySQL 快照后，如果观察到更大的值，绝不能覆盖；
+		// 并发点赞可能已经同时推进了两个存储中的计数。
 		if err := restoreRoomLikeCountScript.Run(ctx, SC.Redis, []string{key}, count).Err(); err != nil {
 			return 0, fmt.Errorf("restore room %d likes to Redis: %w", rooms[i].RoomID, err)
 		}

@@ -74,7 +74,7 @@ docker compose up -d
 docker compose ps
 ```
 
-Compose 会启动 MySQL、Redis、Kafka 和 ZooKeeper，并创建 `live_stream` 数据库。仓库中的账号密码仅用于本地开发；部署前请同步修改 [`docker-compose.yml`](docker-compose.yml) 与 [`config/config.yaml`](config/config.yaml)。
+Compose 会启动 MySQL、Redis、Kafka 和 ZooKeeper，并创建 `live_stream` 数据库。仓库中的账号密码仅用于本地开发；部署前请同步修改 [`docker-compose.yml`](docker-compose.yml) 与 [`config/config.yaml`](config/config.yaml)。MySQL 初始化变量只对新数据卷生效；已有 `mysql_data` 数据卷需要手动更新数据库账号，或在确认不需要保留数据后重新初始化。
 
 ### 3. 启动后端
 

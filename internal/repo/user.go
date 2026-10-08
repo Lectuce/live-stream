@@ -13,7 +13,7 @@ import (
 func CreateUser(ctx context.Context, user *model.User) (*model.User, error) {
 	// err := gorm.G[model.User](dao.SC.Db).Create(ctx, user)
 	// if err != nil {
-	// 	panic(fmt.Errorf("fatal error create user: %w", err))
+	// 	panic(fmt.Errorf("创建用户失败: %w", err))
 	// }
 	results := gorm.WithResult()
 	err := gorm.G[model.User](dao.SC.Db, results).Create(ctx, user)

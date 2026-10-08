@@ -1,5 +1,7 @@
 # 弹幕实时与恢复协议
 
+本协议定义弹幕发送确认、房间内排序、实时广播、缺口恢复和点赞聚合的行为边界。客户端实现应以 `message_id` 去重，并将 `room_seq` 作为恢复游标而非连续计数器。
+
 ## 1. 服务端链路
 
 ```text
@@ -19,7 +21,7 @@ Kafka 是实时链路和持久化链路共同的可靠交接点：
 - Redis 发布成功但 offset 提交前崩溃可能导致重复广播，客户端按 `message_id` 去重；
 - MySQL 不再位于观众看到弹幕之前，数据库抖动不会阻塞实时广播。
 
-旧的 MySQL Transactional Outbox 已退出实时路径。Kafka 本身已经是持久化日志，再让实时广播等待 MySQL 和 Outbox 会重复承担可靠交接职责，并把数据库延迟带入直播链路。
+当前实时路径不使用 MySQL Transactional Outbox。Kafka 已承担持久化日志和可靠交接职责，实时广播无需再等待 MySQL 与 Outbox，避免将数据库延迟引入直播链路。
 
 ## 2. 发送弹幕
 
@@ -174,7 +176,7 @@ Hub 按 1 秒窗口估算：
 
 定位纯 WebSocket 推送极限时，可以暂时把 `adaptive_sampling_enabled` 设为 `false`；业务稳定性测试应保持开启，否则超过预算后仍会继续把压力灌入慢客户端队列。
 
-当前 benchmark 也识别 `delivery_policy`：进入 sampled 后按 `poll_interval_ms` 补拉，恢复 push 时再追赶一次，并把成功补回的唯一消息计入 `recovered`。这允许自动化测试分别验证“纯推送极限”和“过载降级后最终完整交付”。
+项目压测客户端也识别 `delivery_policy`：进入 sampled 后按 `poll_interval_ms` 补拉，恢复 push 时再追赶一次，并把成功补回的唯一消息计入 `recovered`。自动化测试可分别验证纯推送上限和过载降级后的最终完整交付。
 
 ```json
 {
@@ -218,7 +220,7 @@ realtime consumer 按 100 条或 200 ms 刷新。一次刷新按 Kafka Topic、P
 4. 每个房间只执行一次 `rooms.like_count = like_count + delta`；
 5. 在同一事务中推进 checkpoint。
 
-`batch_id` 由 consumer group、Topic、Partition、room_id 和本批 offset 范围确定。checkpoint 额外解决了一个关键问题：进程重启后批次边界可能变化，不能只依靠“旧批次 ID 再插一次会冲突”来去重。
+`batch_id` 由 consumer group、Topic、Partition、room_id 和本批 offset 范围确定。进程重启后批次边界可能变化，因此不能只依靠批次 ID 冲突去重；checkpoint 用于覆盖这一场景。
 
 事务后的严格顺序为：
 
@@ -231,7 +233,7 @@ MySQL 聚合事务成功
 
 因此，MySQL 成功但 Kafka offset 尚未提交时崩溃，只会造成重放，不会重复计数；MySQL 失败时不会越过尚未落库的点赞提交更高 offset。MySQL 是累计点赞数真相源，Redis 是实时镜像，Kafka 在保留期内保存原始点击事件，`like_batches` 保存聚合审计记录。
 
-注意：单次 `message_id` 的客户端重试去重是有 TTL 的 Redis 约束，不是永久 MySQL 明细约束；Kafka 重放幂等则由 MySQL checkpoint 持久保证。这是用固定空间和更少热点写换取吞吐的明确取舍。
+幂等边界：单次 `message_id` 的客户端重试去重由带 TTL 的 Redis 记录保证，不属于永久 MySQL 明细约束；Kafka 重放幂等由 MySQL checkpoint 持久保证。该设计以固定存储空间和更少的热点写入换取吞吐能力。
 
 相关配置：
 
@@ -271,7 +273,7 @@ score  = hot_score
 
 房间接口先执行 `ZREVRANGE rooms:hot`，再从 MySQL 批量补齐房间信息并保持 Redis 顺序。Redis 不可用、榜单为空或含已关播房间时，使用 `start_at DESC, room_id DESC` 补齐或降级，不回退到累计点赞排序。`hot_score` 允许秒级延迟和少量误差，Redis 丢失后可以从新的在线心跳与活动时间桶自动重建；`like_count` 的持久一致性不受影响。
 
-## 11. 验证
+## 11. 验证方法
 
 先测纯扇出：
 

@@ -26,10 +26,9 @@ type pendingLikeEvent struct {
 	message kafkago.Message
 }
 
-// StartRealtimeConsumer keeps MySQL outside the danmaku broadcast path. Likes
-// are buffered by room and persisted as aggregate delta rows. The aggregate and
-// a Kafka partition checkpoint commit atomically before Redis state, Pub/Sub,
-// and finally the Kafka consumer offset are advanced.
+// StartRealtimeConsumer 将 MySQL 排除在弹幕广播链路之外。点赞按房间缓冲，
+// 并以聚合增量记录持久化。聚合数据和 Kafka 分区检查点先以原子方式提交，
+// 随后依次推进 Redis 状态、发布/订阅，最后推进 Kafka 消费者偏移量。
 func StartRealtimeConsumer(ctx context.Context) error {
 	cfg := config.GlobalConfig.Kafka
 	groupID := cfg.GroupID + "-realtime"
@@ -41,13 +40,13 @@ func StartRealtimeConsumer(ctx context.Context) error {
 		StartOffset: kafkago.LastOffset,
 		MinBytes:    1,
 		MaxBytes:    10e6,
-		// The realtime group optimizes for latency, not batch size. MaxWait=0
-		// would select kafka-go's 10 second default, so keep this explicit.
+		// 实时消费者组针对延迟而不是批量大小优化。MaxWait=0 会使用 kafka-go
+		// 默认的 10 秒等待时间，因此这里需要显式设置。
 		MaxWait:          50 * time.Millisecond,
 		ReadBatchTimeout: time.Second,
-		// CommitMessages becomes asynchronous when CommitInterval is non-zero.
-		// All durable/visible side effects still complete before a commit is
-		// enqueued, and replay is absorbed by the DB checkpoint.
+		// CommitInterval 非零时，CommitMessages 会变为异步执行。
+		// 所有持久化或可见的副作用仍会在提交进入队列前完成，
+		// 重放则由数据库检查点消化。
 		CommitInterval: batchWait,
 		ErrorLogger: kafkago.LoggerFunc(func(format string, args ...any) {
 			log.Printf("kafka realtime reader: "+format, args...)
@@ -310,9 +309,8 @@ func syncLikeBatchRedisUntilSuccess(
 		conflicts, err := dao.ConfirmRoomLikes(ctx, identities, idempotencyTTL)
 		if err == nil {
 			if conflicts > 0 {
-				// The aggregate is already durable, so a stale/colliding Redis
-				// identity must not poison the partition. Preserve the existing
-				// owner of the UUID and continue committing the Kafka range.
+				// 聚合数据已经持久化，因此过期或冲突的 Redis 标识不能阻塞整个分区。
+				// 保留 UUID 的现有归属，并继续提交 Kafka 区间。
 				log.Printf("aggregate like idempotency marker conflicts, count=%d", conflicts)
 			}
 			return nil

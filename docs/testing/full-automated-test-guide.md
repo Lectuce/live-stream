@@ -5,14 +5,14 @@
 - Windows：`scripts/full-test.ps1`
 - Linux：`scripts/full-test.sh`（原生 Bash，不需要 PowerShell/pwsh）
 
-该脚本依据 `docs/deep-dive/2026-09-02-live-stream-project-review.md` 建立测试矩阵，覆盖静态检查、HTTP API、Session、房间权限、WebSocket 协议、Kafka 持久化、历史分页、断线补拉、点赞状态以及分级压测。
+两个脚本使用同一套测试矩阵，覆盖静态检查、HTTP API、Session、房间权限、WebSocket 协议、Kafka 持久化、历史分页、断线补拉、点赞状态以及分级压测。
 
 ## 测试前提
 
 1. 后端、MySQL、Redis、Kafka 已启动。
 2. Windows 能访问后端的 HTTP/WebSocket 地址。
 3. 后端 `server.allowed_origins` 包含测试传入的 Origin，例如 `http://localhost:5173`。
-4. 本机已安装 Go。若要检查前端，还需要 Node.js 和 pnpm。
+4. 本机已安装 Go。若要检查前端，还需要 Node.js 和 npm。
 5. 测试会创建随机用户和房间，并在结束时关播；当前项目没有删除用户/房间接口，所以测试数据会保留。
 
 ## Linux 单机测试
@@ -86,23 +86,23 @@ chmod +x ./scripts/full-test.sh
 
 ## Windows / 局域网测试
 
-先做连通性检查：
+以下命令使用 `<SERVER_IP>` 表示服务器地址，使用 `<PROJECT_ROOT>` 表示本地仓库目录。先检查连通性：
 
 ```powershell
-Test-NetConnection 172.21.15.57 -Port 9000
-Invoke-RestMethod -Method Get -Uri "http://172.21.15.57:9000/api/v1/rooms"
+Test-NetConnection <SERVER_IP> -Port 9000
+Invoke-RestMethod -Method Get -Uri "http://<SERVER_IP>:9000/api/v1/rooms"
 ```
 
-## 推荐执行方式
+## 执行顺序
 
 第一次只跑功能测试：
 
 ```powershell
-Set-Location D:\GoProjects\live-stream
+Set-Location <PROJECT_ROOT>
 
 PowerShell -ExecutionPolicy Bypass -File .\scripts\full-test.ps1 `
-  -BaseUrl "http://172.21.15.57:9000" `
-  -WebSocketUrl "ws://172.21.15.57:9000/api/v1/ws" `
+  -BaseUrl "http://<SERVER_IP>:9000" `
+  -WebSocketUrl "ws://<SERVER_IP>:9000/api/v1/ws" `
   -Origin "http://localhost:5173" `
   -Profile Functional
 ```
@@ -111,8 +111,8 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\full-test.ps1 `
 
 ```powershell
 PowerShell -ExecutionPolicy Bypass -File .\scripts\full-test.ps1 `
-  -BaseUrl "http://172.21.15.57:9000" `
-  -WebSocketUrl "ws://172.21.15.57:9000/api/v1/ws" `
+  -BaseUrl "http://<SERVER_IP>:9000" `
+  -WebSocketUrl "ws://<SERVER_IP>:9000/api/v1/ws" `
   -Origin "http://localhost:5173" `
   -Profile Smoke `
   -MaxLossPercent 0 `
@@ -123,8 +123,8 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\full-test.ps1 `
 
 ```powershell
 PowerShell -ExecutionPolicy Bypass -File .\scripts\full-test.ps1 `
-  -BaseUrl "http://172.21.15.57:9000" `
-  -WebSocketUrl "ws://172.21.15.57:9000/api/v1/ws" `
+  -BaseUrl "http://<SERVER_IP>:9000" `
+  -WebSocketUrl "ws://<SERVER_IP>:9000/api/v1/ws" `
   -Origin "http://localhost:5173" `
   -Profile Standard `
   -MaxLossPercent 0 `
@@ -135,8 +135,8 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\full-test.ps1 `
 
 ```powershell
 .\scripts\full-test.ps1 `
-  -BaseUrl "http://172.21.15.57:9000" `
-  -WebSocketUrl "ws://172.21.15.57:9000/api/v1/ws" `
+  -BaseUrl "http://<SERVER_IP>:9000" `
+  -WebSocketUrl "ws://<SERVER_IP>:9000/api/v1/ws" `
   -Origin "http://localhost:5173" `
   -Profile Extreme `
   -MaxLossPercent 0
@@ -145,11 +145,11 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\full-test.ps1 `
 如果服务器上的诊断端口通过 SSH 转发到了本机 16060，可同时采集测试前后的指标：
 
 ```powershell
-ssh -N -L 16060:127.0.0.1:6060 yujun@172.21.15.57
+ssh -N -L 16060:127.0.0.1:6060 <SSH_USER>@<SERVER_IP>
 
 .\scripts\full-test.ps1 `
-  -BaseUrl "http://172.21.15.57:9000" `
-  -WebSocketUrl "ws://172.21.15.57:9000/api/v1/ws" `
+  -BaseUrl "http://<SERVER_IP>:9000" `
+  -WebSocketUrl "ws://<SERVER_IP>:9000/api/v1/ws" `
   -DiagnosticsBaseUrl "http://127.0.0.1:16060" `
   -Profile Standard
 ```
@@ -171,7 +171,7 @@ Kafka 纯写入压测默认关闭，传入 broker 后才执行：
 | 模块 | 自动检查 |
 |---|---|
 | Go 代码 | `go test ./...`、`go vet ./...` |
-| 前端 | `pnpm lint`、`pnpm build`（存在 `frontend/package.json` 时） |
+| 前端 | `npm run lint`、`npm run build`（存在 `frontend/package.json` 时） |
 | 注册 | DTO 校验、成功注册、重复邮箱、自动生成 user_id |
 | 登录与 Session | 错误密码、sid 格式、`/auth/me`、logout 后失效 |
 | 房间 | 创建、单用户单房间、mine、详情、改名、开播、关播、榜单 |
@@ -208,9 +208,9 @@ Linux 对应参数为：
 --fail-on-known-issues
 ```
 
-## 点赞一致性修复及回归检查
+## 点赞一致性回归检查
 
-脚本会同时做源码审计和运行时重复点赞检查。以下三个历史问题已经修复，并会持续回归验证：
+脚本同时执行源码审计和运行时重复点赞检查，持续验证以下一致性约束：
 
 1. realtime consumer 按 100 条或 200 ms 聚合点赞，每个房间/分区窗口只写一条 `like_batches(delta)`，并且只更新一次 `rooms` 热点行。
 2. 聚合记录、`rooms.like_count += delta` 和 Kafka 分区 checkpoint 位于同一个 MySQL 事务；即使重启后批次边界改变，已处理 offset 也不会再次计数。

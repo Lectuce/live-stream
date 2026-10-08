@@ -12,7 +12,7 @@ import (
 func CreateDanma(ctx context.Context, danma *model.Danma) (*model.Danma, error) {
 	// err := gorm.G[model.User](model.DB.DB).Create(ctx, user)
 	// if err != nil {
-	// 	panic(fmt.Errorf("fatal error create user: %w", err))
+	// 	panic(fmt.Errorf("创建用户失败: %w", err))
 	// }
 	results := gorm.WithResult()
 	err := gorm.G[model.Danma](dao.SC.Db, results).Create(ctx, danma)

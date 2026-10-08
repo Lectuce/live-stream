@@ -11,11 +11,10 @@ export function defaultApiBase(): string {
       const configuredOrigin = new URL(configured).origin;
       if (configuredOrigin === pageOrigin) return configuredOrigin;
     } catch {
-      // Invalid legacy values are discarded below.
+      // 无效的旧版配置值会在下方被丢弃。
     }
-    // Older versions allowed saving a remote backend URL in the browser. That
-    // bypasses the same-origin proxy and breaks the Session Cookie/WebSocket
-    // Origin contract, so migrate it back to the page origin automatically.
+    // 旧版本允许在浏览器中保存远程后端 URL，这会绕过同源代理并破坏
+    // Session Cookie 与 WebSocket Origin 的约定，因此自动迁移回页面来源。
     window.localStorage.removeItem(API_STORAGE_KEY);
   }
   // 开发时默认走 Vinext/Vite 的同源反向代理，这样 Session Cookie

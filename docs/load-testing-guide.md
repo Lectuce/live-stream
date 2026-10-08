@@ -1,6 +1,6 @@
 # Live Stream 压测操作手册
 
-本文档描述如何使用 Windows 作为压测机，对部署在 Ubuntu 服务器上的 `live-stream` 执行完整压测，包括：
+本手册适用于从 Windows 压测机测试部署在 Ubuntu 服务器上的 `live-stream`，覆盖以下场景：
 
 - SSH 端口转发和连通性验证；
 - 注册、登录、创建房间和开播；
@@ -40,21 +40,11 @@ SSH 隧道适合功能验证和中小规模测试。它会引入额外加密和�
 |---|---|---|
 | `SERVER_IPV4` | 服务器公网 IPv4 | `203.0.113.10` |
 | `SERVER_IPV6` | 服务器公网 IPv6 | `2001:db8::10` |
-| `SSH_USER` | SSH 用户名 | `yujun` |
+| `SSH_USER` | SSH 用户名 | `deploy` |
 | `ROOM_ID` | 实际测试房间 ID | `1` |
 | `SID_VALUE` | 登录响应中的 Session ID | 一段十六进制字符串 |
 
-用户名和 `@` 之间不能添加反斜杠。正确格式是：
-
-```text
-yujun@SERVER_IPV4
-```
-
-不是：
-
-```text
-yujun\@SERVER_IPV4
-```
+用户名和 `@` 之间不能添加反斜杠。
 
 ## 3. 压测前的代码检查
 
@@ -368,7 +358,7 @@ WebSocket Handler 会拒绝不存在或未开播的房间，因此必须完成�
 在 Windows 第二个 PowerShell 进入本地项目：
 
 ```powershell
-Set-Location D:\GoProjects\live-stream
+Set-Location <PROJECT_ROOT>
 ```
 
 如果换了新的 PowerShell 窗口，需要重新设置：
@@ -468,7 +458,7 @@ $History | ConvertTo-Json -Depth 10
 
 1. Kafka Producer 是否报错；
 2. Kafka Consumer 是否读取消息；
-3. `processBath` 成功/失败重试条件是否写反；
+3. `processBatch` 成功/失败重试条件是否写反；
 4. MySQL 是否写入弹幕；
 5. Redis 是否向 `live:danmu:broadcast` 发布；
 6. Redis Subscriber 是否仍在运行。
@@ -809,7 +799,7 @@ TcpTestSucceeded : False
 已经手动建立 SSH 隧道时，在 Windows PowerShell 中执行：
 
 ```powershell
-Set-Location D:\GoProjects\live-stream
+Set-Location <PROJECT_ROOT>
 
 .\scripts\load-test.ps1
 ```
@@ -868,7 +858,7 @@ Set-Location D:\GoProjects\live-stream
 ```powershell
 .\scripts\load-test.ps1 `
   -StartTunnel `
-  -SshTarget "yujun@119.91.119.208"
+  -SshTarget "<SSH_USER>@<SERVER_IPV4>"
 ```
 
 自动隧道使用 `BatchMode=yes`，不会读取或保存 SSH 密码。使用密码登录时，应先按照第 5 节手动建立隧道，再运行脚本。

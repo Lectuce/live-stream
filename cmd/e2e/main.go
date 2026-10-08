@@ -219,8 +219,8 @@ func run(cfg testConfig) (result, error) {
 	r.SpoofingBlocked = true
 	r.OrderingOK = true
 
-	// Retry one logical danmaku with the same UUID. The persistence test uses
-	// this ID to verify that MySQL stores exactly one row.
+	// 使用相同的 UUID 重试同一条逻辑弹幕。持久化测试会用此 ID
+	// 验证 MySQL 是否只存储了一行记录。
 	if err := sender.WriteJSON(map[string]any{
 		"type":       "danma",
 		"message_id": messageIDs[1],
@@ -271,8 +271,8 @@ func run(cfg testConfig) (result, error) {
 	r.LikeMessageID = likeID
 	r.LikeCount, _ = numberAsInt64(state.Data["like_count"])
 
-	// Re-submit the exact same logical like. The count must remain unchanged;
-	// duplicate_like_applied=true exposes a durable idempotency regression.
+	// 再次提交完全相同的逻辑点赞。点赞数必须保持不变；
+	// duplicate_like_applied=true 表示持久化幂等性发生了回归。
 	if err := sender.WriteJSON(map[string]any{
 		"type":       "like",
 		"message_id": likeID,

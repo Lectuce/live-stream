@@ -175,7 +175,7 @@ function Invoke-JsonApi {
 
 function Start-SshTunnel {
     if ([string]::IsNullOrWhiteSpace($SshTarget)) {
-        throw "-StartTunnel requires -SshTarget, for example yujun@119.91.119.208"
+        throw "-StartTunnel requires -SshTarget, for example <SSH_USER>@<SERVER_IPV4>"
     }
 
     if (Test-TcpPort -HostName "127.0.0.1" -Port $LocalPort) {
@@ -251,9 +251,9 @@ function Invoke-Benchmark {
     $benchmarkExitCode = 0
     $previousErrorActionPreference = $ErrorActionPreference
     try {
-        # Go's log package writes normal benchmark output to stderr. Windows
-        # PowerShell 5.1 wraps native stderr as NativeCommandError when the
-        # global preference is Stop, so temporarily keep native logs flowing.
+        # Go 的 log 包会将正常的基准测试输出写入 stderr。当全局首选项为 Stop 时，
+        # Windows PowerShell 5.1 会将原生命令的 stderr 包装为 NativeCommandError，
+        # 因此这里临时允许原生日志继续输出。
         $ErrorActionPreference = "Continue"
         & go @arguments 2>&1 |
             Tee-Object -Variable benchmarkLines |
@@ -462,10 +462,9 @@ try {
         throw "Login response contained an invalid sid value (length=$($script:Sid.Length))"
     }
 
-    # Windows PowerShell can discard a manually supplied Cookie header.
-    # Put sid in a CookieContainer and mark this client-side copy non-Secure so
-    # it is sent through the local HTTP SSH tunnel. The server-side cookie
-    # remains Secure for browser use.
+    # Windows PowerShell 可能会丢弃手动提供的 Cookie 请求头。
+    # 将 sid 放入 CookieContainer，并把客户端副本标记为非 Secure，
+    # 以便通过本地 HTTP SSH 隧道发送。服务端 Cookie 仍保持 Secure，供浏览器使用。
     $sessionCookie = New-Object System.Net.Cookie("sid", $script:Sid, "/")
     $sessionCookie.Secure = $false
     $script:WebSession.Cookies.Add([Uri]$BaseUrl, $sessionCookie)

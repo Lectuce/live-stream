@@ -19,8 +19,8 @@ import (
 const (
 	writeWait = 10 * time.Second
 	pongWait  = 60 * time.Second
-	// Keep the connection active before common 30-second reverse-proxy/NAT idle
-	// timeouts. Browsers answer WebSocket Ping frames with Pong automatically.
+	// 在常见的 30 秒反向代理/NAT 空闲超时前维持连接活跃。
+	// 浏览器会自动用 Pong 响应 WebSocket Ping 帧。
 	pingPeriod        = 20 * time.Second
 	clientQueueSize   = 256
 	controlQueueSize  = 8
@@ -128,8 +128,8 @@ func (c *Client) trySendData(
 		}
 		return enqueueOK
 	default:
-		// The queue contains stale realtime events. Drop the oldest one so the
-		// client remains close to live, then ask it to replay the missing range.
+		// 队列中包含过期的实时事件。丢弃最旧事件以便客户端尽量接近实时进度，
+		// 然后通知客户端补拉缺失区间。
 		select {
 		case <-c.send:
 		default:
@@ -169,7 +169,7 @@ func (c *Client) replaceState(message *websocket.PreparedMessage) enqueueResult 
 		return enqueueOK
 	default:
 	}
-	// State is replaceable: discard the stale value and keep only the newest.
+	// 状态可以覆盖：丢弃旧值，只保留最新值。
 	select {
 	case <-c.state:
 	default:
@@ -178,9 +178,9 @@ func (c *Client) replaceState(message *websocket.PreparedMessage) enqueueResult 
 	return enqueueOK
 }
 
-// recordQueueFull distinguishes a short burst from a persistently slow
-// connection. The first dropped live event emits one resync hint; only a
-// sustained high-water mark closes the socket.
+// recordQueueFull 用于区分短时突发流量和持续缓慢的连接。
+// 首次丢弃实时事件时发送一次重新同步提示；只有队列持续处于高水位时
+// 才会关闭套接字。
 func (c *Client) recordQueuePressure(
 	now time.Time,
 	strikeLimit uint32,
@@ -330,8 +330,8 @@ func (c *Client) readPump() {
 				})
 				continue
 			}
-			// Canonicalize equivalent UUID spellings so they cannot bypass the
-			// Redis message_id idempotency key.
+			// 将等价的 UUID 写法规范化，避免其绕过 Redis 的
+			// message_id 幂等键。
 			msg.MessageID = parsedMessageID.String()
 		}
 		msg.UserID = c.UserID
@@ -457,9 +457,8 @@ func (c *Client) readPump() {
 				confirmErr = dao.ConfirmRoomLike(c.hub.ctx, likeIdentity, likeAcceptedTTL)
 			}
 			if confirmErr != nil {
-				// Kafka is already the durable handoff. The consumer repairs this
-				// Redis marker after the aggregate commits, so do not report the
-				// accepted Kafka write as a failed click.
+				// Kafka 已经完成可靠交接。聚合提交后消费者会修复此 Redis 标记，
+				// 因此不要把 Kafka 已接受的写入报告为点赞失败。
 				log.Printf("confirm accepted like reservation: %v", confirmErr)
 			}
 		}
@@ -498,7 +497,7 @@ func (c *Client) writePump() {
 	}
 
 	for dataChannel != nil || controlChannel != nil || stateChannel != nil {
-		// Control messages must not wait behind hundreds of stale danmaku.
+		// 控制消息不能排在数百条过期弹幕后等待。
 		if controlChannel != nil {
 			select {
 			case message, ok := <-controlChannel:

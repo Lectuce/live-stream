@@ -1,7 +1,6 @@
-// Browser reference client for push-first delivery with automatic pull recovery.
-// It reconnects WebSocket with exponential backoff, deduplicates message_id,
-// replays gaps by room_seq, and polls the recent Redis-backed replay endpoint
-// while a hot room is in sampled mode.
+// 浏览器参考客户端：优先使用推送，并通过自动拉取恢复数据。
+// 它会使用指数退避重连 WebSocket、按 message_id 去重、按 room_seq 补拉缺口，
+// 并在热门房间处于采样模式时轮询由 Redis 支持的近期消息重放接口。
 export class DanmakuClient {
   constructor(options) {
     this.wsUrl = options.wsUrl;
@@ -73,7 +72,7 @@ export class DanmakuClient {
     socket.onopen = async () => {
       this.reconnectAttempt = 0;
       try {
-        // Messages may have been published while the socket was disconnected.
+        // 套接字断开期间可能已有新消息发布。
         if (this.lastSeq > 0) await this.#recover(this.lastSeq, 0);
       } catch (error) {
         this.onError(error);
@@ -144,8 +143,7 @@ export class DanmakuClient {
     this.pollTimer = null;
     if (mode === "sampled") {
       if (this.lastSeq === 0 && latestSeq > 0) {
-        // A first-time viewer starts at the current live edge instead of
-        // replaying the room's entire history.
+        // 首次进入的观众从当前直播进度开始，而不是重放房间的全部历史消息。
         this.pullCursor = latestSeq;
       } else {
         this.pullCursor = Math.min(this.pullCursor || this.lastSeq, this.lastSeq);

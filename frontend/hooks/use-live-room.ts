@@ -127,17 +127,15 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
         cursor = Math.max(cursor, result.next_seq || 0);
         if (!result.has_more) break;
       }
-      // A successful replay only clears an earlier replay failure. It must not
-      // erase a WebSocket disconnect error, otherwise the one-second sampled
-      // replay loop makes the connection warning flash on and off.
+      // 重放成功只能清除先前的重放失败，不能清除 WebSocket 断开错误，
+      // 否则每秒执行一次的采样重放循环会让连接警告反复闪烁。
       setError((current) => current === '消息同步失败，请稍后重试' ? '' : current);
     } catch { setError('消息同步失败，请稍后重试'); }
     finally { recoveringRef.current = false; }
   }, [apiBase, append, roomId]);
 
-  // Message/recovery callbacks may evolve with room state, but those changes
-  // must not tear down a healthy socket. Keep the connection effect dependent
-  // only on values that identify the connection itself.
+  // 消息和恢复回调可能随房间状态变化，但这些变化不应断开健康的套接字。
+  // 连接副作用应只依赖于标识连接本身的值。
   const appendRef = useRef(append);
   const applyLikeCountRef = useRef(applyLikeCount);
   const recoverRef = useRef(recover);
@@ -159,9 +157,9 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
       const current = wsRef.current;
       if (current && (current.readyState === WebSocket.CONNECTING || current.readyState === WebSocket.OPEN)) return;
       setConnection('connecting');
-      // The Cloudflare development plugin and Vite's /api proxy both listen
-      // for HTTP upgrades. This application subprotocol makes Cloudflare leave
-      // the socket to Vite's proxy instead of destroying the proxied stream.
+      // Cloudflare 开发插件和 Vite 的 /api 代理都会监听 HTTP 升级请求。
+      // 此应用子协议会让 Cloudflare 将套接字交给 Vite 代理，
+      // 而不是破坏已代理的数据流。
       const ws = new WebSocket(
         `${toWebSocketBase(apiBase)}/api/v1/ws?room_id=${roomId}`,
         LIVE_STREAM_SUBPROTOCOL,

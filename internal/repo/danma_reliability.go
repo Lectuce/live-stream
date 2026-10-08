@@ -10,9 +10,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// PersistDanmaEvents is the durable-history consumer. Realtime delivery uses a
-// separate Kafka consumer group, so MySQL latency cannot delay WebSocket
-// viewers. A repeated MessageID is a successful no-op.
+// PersistDanmaEvents 是持久化历史记录的消费者。实时投递使用独立的 Kafka
+// 消费者组，因此 MySQL 延迟不会影响 WebSocket 观众接收消息。
+// 重复的 MessageID 会被视为成功的空操作。
 func PersistDanmaEvents(ctx context.Context, messages []model.Message) error {
 	return dao.SC.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, message := range messages {

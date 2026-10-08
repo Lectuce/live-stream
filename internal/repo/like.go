@@ -16,9 +16,9 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// LikeAggregationEvent is the minimal durable identity of one consumed like.
-// Kafka partition+offset, not an in-memory window boundary, determines whether
-// the event was already included in a committed aggregate.
+// LikeAggregationEvent 是一条已消费点赞事件的最小持久化标识。
+// 判断事件是否已包含在提交的聚合中，依据的是 Kafka 分区和偏移量，
+// 而不是内存中的窗口边界。
 type LikeAggregationEvent struct {
 	Topic     string
 	Partition int
@@ -42,11 +42,10 @@ type likeBatchPlan struct {
 	batch model.LikeBatch
 }
 
-// ApplyLikeBatches stores one aggregate row per room and consumed partition
-// range, increments each room once by the aggregate delta, and advances a
-// partition checkpoint in the same MySQL transaction. If Kafka replays after
-// the DB commit but before its offset commit, events at or below LastOffset are
-// skipped even when the next in-memory batch has different boundaries.
+// ApplyLikeBatches 为每个房间及已消费的分区区间保存一条聚合记录，
+// 按聚合增量为每个房间更新一次计数，并在同一个 MySQL 事务中推进分区检查点。
+// 如果 Kafka 在数据库提交后、偏移量提交前重放，那么即使下一批内存数据的
+// 边界不同，也会跳过偏移量不大于 LastOffset 的事件。
 func ApplyLikeBatches(
 	ctx context.Context,
 	consumerGroup string,

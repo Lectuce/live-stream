@@ -13,7 +13,7 @@ go run ./cmd/benchmark -c 60000 -r 1s -room 1 -origin http://localhost:5173
 同时测试弹幕发送时，需要先登录并把 Cookie 中的 `sid` 传入。所有压测连接会复用这个测试账号的 Session：
 
 ```powershell
-go run ./cmd/benchmark -c 60000 -r 1s -room 1 -origin http://localhost:5173 -sid "你的 sid" -active 0.001
+go run ./cmd/benchmark -c 60000 -r 1s -room 1 -origin http://localhost:5173 -sid "<SID>" -active 0.001
 ```
 
 常用参数：
@@ -33,7 +33,7 @@ ACK 协议成本测试可以增加 `-ack-every 50`。每个客户端每处理约
 通过 SSH 隧道测试远端服务时，仍可以使用默认 `ws://localhost:9000`，例如：
 
 ```powershell
-ssh -L 9000:127.0.0.1:9000 user@server
+ssh -L 9000:127.0.0.1:9000 <SSH_USER>@<SERVER_HOST>
 go run ./cmd/benchmark -c 30000 -room 1 -origin http://localhost:5173
 ```
 

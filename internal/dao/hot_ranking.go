@@ -41,10 +41,9 @@ return {1, 0}
 
 var confirmAndRecordHotLikeScript = redis.NewScript(confirmAndRecordHotLikeLua)
 
-// ConfirmRoomLikeAndRecordHotContribution turns the ingress reservation into
-// an accepted marker and, at most N times per user/minute, contributes to the
-// approximate ranking signal. The durable historical like counter is not
-// capped and is updated independently by the Kafka consumer.
+// ConfirmRoomLikeAndRecordHotContribution 将入口预留转换为已接受标记，
+// 并以每个用户每分钟最多 N 次的频率计入近似排行信号。
+// 持久化历史点赞计数不受此限制，由 Kafka 消费者独立更新。
 func ConfirmRoomLikeAndRecordHotContribution(
 	ctx context.Context,
 	identity RoomLikeIdentity,
@@ -101,9 +100,9 @@ redis.call('ZREM', KEYS[2], ARGV[1])
 return 1
 `
 
-// ReportLocalOnlineCounts writes one heartbeat per gateway instance and room.
-// Missing rooms from the previous snapshot are removed immediately; crashes
-// are handled by the heartbeat cutoff used during aggregation.
+// ReportLocalOnlineCounts 为每个网关实例和房间写入一条心跳。
+// 上一次快照中存在但本次缺失的房间会立即删除；进程崩溃则由聚合时使用的
+// 心跳截止时间处理。
 func ReportLocalOnlineCounts(
 	ctx context.Context,
 	instanceID string,
@@ -189,8 +188,8 @@ func ReadGlobalOnlineCounts(
 	return counts, nil
 }
 
-// ReadRecentRoomActivity approximates the trailing minute with the current
-// minute bucket plus the still-overlapping fraction of the previous bucket.
+// ReadRecentRoomActivity 使用当前分钟桶和上一个桶中仍与窗口重叠的部分，
+// 近似计算过去一分钟的活动量。
 func ReadRecentRoomActivity(
 	ctx context.Context,
 	roomIDs []uint64,

@@ -672,8 +672,8 @@ func readMessages(
 			}
 			continue
 		}
-		// Redis currently broadcasts persisted danmaku without a type field,
-		// so content is also accepted as the signal for a received danmaku.
+		// Redis 当前广播持久化弹幕时不带 type 字段，
+		// 因此也将 content 作为收到弹幕的判断依据。
 		if message.Type == "danma" || message.Content != "" {
 			if !tracker.observe(message) {
 				continue
@@ -683,8 +683,8 @@ func readMessages(
 				stats.latency.observe(time.Since(sentAt))
 			}
 			if message.RoomSeq > 0 {
-				// room_seq is a Kafka partition cursor. It is monotonic for one
-				// room but can contain gaps when other rooms share the partition.
+				// room_seq 是 Kafka 分区游标。它在单个房间内单调递增，
+				// 但当其他房间共享该分区时可能出现间隔。
 				deliveriesSinceAck++
 				if ackEvery > 0 && deliveriesSinceAck >= ackEvery {
 					ack := outgoingMessage{Type: "ack", RoomID: roomID, AckSeq: message.RoomSeq}

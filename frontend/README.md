@@ -10,13 +10,13 @@
 - 历史弹幕分页和直播间弹幕覆盖层；
 - 桌面端与移动端响应式布局。
 
-## 本机启动
+## 本地启动
 
 后端运行在本机 `9000` 端口时：
 
 ```powershell
-Set-Location D:\GoProjects\live-stream\frontend
-$env:Path = "C:\Users\Ambition\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;C:\Users\Ambition\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback;$env:Path"
+Set-Location <PROJECT_ROOT>\frontend
+pnpm install --frozen-lockfile
 pnpm dev
 ```
 
@@ -38,12 +38,11 @@ Vinext 使用 `--hostname`（不是 Vite CLI 的 `--host`）。局域网浏览�
 
 ## 连接局域网服务器
 
-例如后端位于 `172.21.15.57:9000`：
+将 `<BACKEND_HOST>` 替换为后端的局域网地址：
 
 ```powershell
-Set-Location D:\GoProjects\live-stream\frontend
-$env:Path = "C:\Users\Ambition\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;C:\Users\Ambition\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback;$env:Path"
-$env:LIVE_STREAM_BACKEND_URL = "http://172.21.15.57:9000"
+Set-Location <PROJECT_ROOT>\frontend
+$env:LIVE_STREAM_BACKEND_URL = "http://<BACKEND_HOST>:9000"
 $env:LIVE_STREAM_WEBSOCKET_ORIGIN = "http://localhost:3000"
 pnpm dev
 ```

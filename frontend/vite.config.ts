@@ -9,7 +9,7 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
 
 const { d1, r2 } = hostingConfig;
 
-// macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
+// macOS Seatbelt 会阻止 FSEvents，因此 Codex 预览需要通过轮询实现热更新。
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 
 const localBindingConfig = {
@@ -35,18 +35,18 @@ const localBindingConfig = {
 };
 
 export default defineConfig(async ({ mode }) => {
-  // Keep Wrangler and Miniflare state project-local. These are non-secret tool
-  // settings; application environment belongs in ignored `.env*` files.
+  // 将 Wrangler 和 Miniflare 状态保留在项目目录内。这些是非敏感的工具设置；
+  // 应用环境变量应存放在被忽略的 `.env*` 文件中。
   process.env.WRANGLER_WRITE_LOGS ??= 'false';
   process.env.WRANGLER_LOG_PATH ??= '.wrangler/logs';
   process.env.MINIFLARE_REGISTRY_PATH ??= '.wrangler/registry';
 
-  // Wrangler snapshots its log path while the Cloudflare plugin is imported.
+  // 导入 Cloudflare 插件时，Wrangler 会记录当时的日志路径。
   const { cloudflare } = await import('@cloudflare/vite-plugin');
 
-  // Vite loads .env files after config evaluation unless loadEnv is called
-  // explicitly. Read them here so a remote backend configured in .env.local
-  // does not silently fall back to the frontend machine's 127.0.0.1:9000.
+  // 除非显式调用 loadEnv，否则 Vite 会在配置求值后才加载 .env 文件。
+  // 在此读取这些文件，避免 `.env.local` 中配置的远程后端被静默回退为
+  // 前端机器上的 127.0.0.1:9000。
   const env = loadEnv(mode, process.cwd(), 'LIVE_STREAM_');
   const backendTarget = process.env.LIVE_STREAM_BACKEND_URL || env.LIVE_STREAM_BACKEND_URL || 'http://127.0.0.1:9000';
   const websocketOrigin = process.env.LIVE_STREAM_WEBSOCKET_ORIGIN || env.LIVE_STREAM_WEBSOCKET_ORIGIN || 'http://localhost:3000';
@@ -55,9 +55,9 @@ export default defineConfig(async ({ mode }) => {
     changeOrigin: true,
     ws: true,
     configure(proxy) {
-      // The browser talks to this trusted same-origin development proxy.
-      // Normalize the forwarded WebSocket Origin to a value explicitly
-      // allowed by the Go server, independent of localhost/127/LAN URL.
+      // 浏览器与这个可信的同源开发代理通信。
+      // 将转发的 WebSocket Origin 规范化为 Go 服务端明确允许的值，
+      // 不受 localhost、127 或局域网 URL 的影响。
       proxy.on('proxyReqWs', (proxyRequest) => {
         proxyRequest.setHeader('Origin', websocketOrigin);
       });

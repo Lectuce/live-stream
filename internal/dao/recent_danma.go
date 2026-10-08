@@ -35,9 +35,8 @@ func recentDanmaKey(roomID uint64) string {
 	return recentDanmaKeyPrefix + strconv.FormatUint(roomID, 10)
 }
 
-// CacheAndPublishRecentDanma atomically stores the latest recoverable event
-// before publishing it. A subscriber can therefore start replay immediately
-// after receiving a resync hint without waiting for MySQL persistence.
+// CacheAndPublishRecentDanma 在发布前以原子方式保存最新的可恢复事件。
+// 因此订阅者收到重新同步提示后可立即开始重放，无需等待 MySQL 持久化。
 func CacheAndPublishRecentDanma(
 	ctx context.Context,
 	channel string,
@@ -72,8 +71,8 @@ func CacheAndPublishRecentDanma(
 	).Err()
 }
 
-// SelectRecentDanmasAfterSeq returns covered=false when the requested cursor
-// is older than the retained Redis window. Callers must then fall back to DB.
+// SelectRecentDanmasAfterSeq 在请求的游标早于 Redis 保留窗口时返回
+// covered=false，此时调用方必须回退到数据库查询。
 func SelectRecentDanmasAfterSeq(
 	ctx context.Context,
 	roomID uint64,

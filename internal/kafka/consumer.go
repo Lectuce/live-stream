@@ -170,10 +170,9 @@ func StartKafkaConsumer(ctx context.Context) error {
 	}
 }
 
-// Kafka keying keeps every room on one partition. The partition offset is
-// therefore a stable, monotonically increasing cursor for that room. Other
-// rooms sharing the partition can create gaps, so clients compare/order by the
-// cursor but must not assume every next value is exactly previous+1.
+// Kafka 分区键确保每个房间始终位于同一分区。因此，分区偏移量是该房间稳定且
+// 单调递增的游标。共享分区的其他房间可能造成游标间隔，所以客户端应按游标
+// 比较和排序，但不能假设每个后续值都恰好等于前一个值加一。
 func enrichMessageFromKafka(message *model.Message, kafkaMessage kafka.Message) {
 	if kafkaMessage.Offset >= 0 {
 		message.RoomSeq = uint64(kafkaMessage.Offset) + 1
