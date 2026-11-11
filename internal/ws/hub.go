@@ -318,24 +318,33 @@ func (h *Hub) broadcastOnlineCount(roomID uint64) {
 }
 
 func (h *Hub) handleStateUpdate(msg *Message) {
-	if msg.Data == nil || msg.Data["sub_type"] != "like_count" {
+	if msg.Data == nil {
 		return
 	}
-	likeCount, ok := msg.Data["like_count"].(float64)
-	if !ok {
-		return
-	}
-	h.mu.Lock()
-	room, exists := h.rooms[msg.RoomID]
-	if !exists {
+
+	subType, _ := msg.Data["sub_type"].(string)
+	switch subType {
+	case "like_count":
+		likeCount, ok := msg.Data["like_count"].(float64)
+		if !ok {
+			return
+		}
+		h.mu.Lock()
+		room, exists := h.rooms[msg.RoomID]
+		if !exists {
+			h.mu.Unlock()
+			return
+		}
+		room.mu.Lock()
 		h.mu.Unlock()
-		return
+		room.likeCount = int64(likeCount)
+		room.mu.Unlock()
+		h.broadcastOnlineCount(msg.RoomID)
+	case "room_status":
+		h.broadcastStateToRoom(msg)
+
 	}
-	room.mu.Lock()
-	h.mu.Unlock()
-	room.likeCount = int64(likeCount)
-	room.mu.Unlock()
-	h.broadcastOnlineCount(msg.RoomID)
+
 }
 
 func (h *Hub) broadcastStateToRoom(msg *Message) {

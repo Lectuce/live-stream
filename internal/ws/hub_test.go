@@ -2,6 +2,7 @@ package ws
 
 import (
 	"encoding/json"
+	"live-stream/internal/model"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -423,5 +424,24 @@ func TestHotRoomDropsOldestAtHighWatermark(t *testing.T) {
 	second := <-client.send
 	if first.roomSeq != 2 || second.roomSeq != 3 {
 		t.Fatalf("queue sequences=%d,%d, want 2,3", first.roomSeq, second.roomSeq)
+	}
+}
+
+func TestRoomStatusUpdateBroadcastsToConnectedClients(t *testing.T) {
+	hub := newHub(1)
+	client := NewClient(hub, nil, 1, 1, "viewer")
+	hub.handleRegister(client)
+
+	hub.handleStateUpdate(&Message{
+		Type:   model.MsgTypeSystem,
+		RoomID: 1,
+		Data: map[string]interface{}{
+			"sub_type": "room_status",
+			"status":   float64(0),
+		},
+	})
+
+	if got := len(client.state); got != 1 {
+		t.Fatalf("room status frames = %d, want 1", got)
 	}
 }
