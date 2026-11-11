@@ -33,6 +33,18 @@ export default function LiveFeedPage() {
   const refreshAbortRef = useRef<AbortController | null>(null);
   const loadMoreAbortRef = useRef<AbortController | null>(null);
 
+  const cancelFeedRequests = useCallback(() => {
+    requestGenerationRef.current++;
+    refreshAbortRef.current?.abort();
+    loadMoreAbortRef.current?.abort();
+
+    refreshAbortRef.current = null;
+    loadMoreAbortRef.current = null;
+    loadingMoreRef.current = false;
+  }, []);
+
+
+
   const refreshFeed = useCallback(async (showLoading = false) => {
     const generation = ++requestGenerationRef.current;
 
@@ -193,9 +205,16 @@ export default function LiveFeedPage() {
 
   useEffect(() => {
     if (rooms.length === 0) {
+      const previousIndex = activeIndexRef.current;
+
       activeRoomIdRef.current = null;
       activeIndexRef.current = 0;
-      setActiveIndex(0);
+
+      if (previousIndex !== 0) {
+        queueMicrotask(() => {
+          setActiveIndex(0);
+        });
+      }
 
       if (
         hasMoreRef.current &&
@@ -204,29 +223,41 @@ export default function LiveFeedPage() {
       ) {
         void loadMore();
       }
+
       return;
     }
+
+    const previousIndex = activeIndexRef.current;
 
     const previousRoomIndex = rooms.findIndex(
       (room) => room.room_id === activeRoomIdRef.current,
     );
 
-    const nextIndex = previousRoomIndex >= 0
-      ? previousRoomIndex
-      : Math.min(activeIndexRef.current, rooms.length - 1);
+    const nextIndex =
+      previousRoomIndex >= 0
+        ? previousRoomIndex
+        : Math.min(previousIndex, rooms.length - 1);
 
     activeIndexRef.current = nextIndex;
     activeRoomIdRef.current = rooms[nextIndex].room_id;
-    setActiveIndex(nextIndex);
+
+    if (previousIndex !== nextIndex) {
+      queueMicrotask(() => {
+        setActiveIndex(nextIndex);
+      });
+    }
 
     const frame = requestAnimationFrame(() => {
       const scroller = scrollerRef.current;
+
       if (scroller) {
         scroller.scrollTop = nextIndex * scroller.clientHeight;
       }
     });
 
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+    };
   }, [loadMore, rooms]);
 
   useEffect(() => {

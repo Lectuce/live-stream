@@ -59,9 +59,11 @@ export function LiveRoom({ roomId }: { roomId: number }) {
   useEffect(() => {
     if (roomStatus === null) return;
 
-    setRoom((current) =>
-      current ? { ...current, status: roomStatus } : current,
-    );
+    queueMicrotask(() => {
+      setRoom((current) =>
+        current ? { ...current, status: roomStatus } : current,
+      );
+    });
   }, [roomStatus]);
 
 

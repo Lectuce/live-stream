@@ -24,14 +24,14 @@ type Props = {
 };
 
 
-  export function LiveFeedItem({
-    room,
-    index,
-    total,
-    active,
-    apiBase,
-    onRoomEnded,
-  }: Props) {
+export function LiveFeedItem({
+  room,
+  index,
+  total,
+  active,
+  apiBase,
+  onRoomEnded,
+}: Props) {
   const {
     messages,
     appendMessages,
@@ -46,6 +46,35 @@ type Props = {
     active,
     room.like_count ?? room.praise_count ?? 0,
   );
+
+
+  useEffect(() => {
+    if (!active) return;
+
+    const controller = new AbortController();
+
+    void api
+      .roomDetail(apiBase, room.room_id, controller.signal)
+      .then((result) => {
+        if (result.data.status === 0) {
+          onRoomEnded(room.room_id);
+        }
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        console.error('检查直播间状态失败', error);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [active, apiBase, onRoomEnded, room.room_id]);
+
+
+
 
   useEffect(() => {
     if (!active) return;
