@@ -9,3 +9,6 @@ live-stream
 /docs/backend-development-guide.md
 /docs/deep-dive/
 /interview-doc/
+
+.codex-ppt-build/
+docs/bilibili-style-platform-plan.md

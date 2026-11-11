@@ -45,7 +45,7 @@ func GetHotLiveFeed(ctx context.Context, cursorText string, limit int) (*model.L
 		if err != nil {
 			return nil, fmt.Errorf("select rooms error")
 		}
-		roomIDs := make([]uint64, 0, len(roomIDs))
+		roomIDs = make([]uint64, 0, len(rooms))
 		for _, room := range rooms {
 			roomIDs = append(roomIDs, room.RoomID)
 		}
@@ -156,12 +156,17 @@ func encodeHotLiveFeedCursor(
 func decodeHotLiveFeedCursor(value string) (hotLiveFeedCursor, error) {
 	var cursor hotLiveFeedCursor
 
-	err := json.Unmarshal([]byte(value), &cursor)
+	payload, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil {
 		return cursor, ErrInvalidFeedCursor
 	}
 
-	if cursor.Version == hotLiveFeedCursorVersion || cursor.SnapshotID == "" || cursor.Offset < 0 {
+	err = json.Unmarshal(payload, &cursor)
+	if err != nil {
+		return cursor, ErrInvalidFeedCursor
+	}
+
+	if cursor.Version != hotLiveFeedCursorVersion || cursor.SnapshotID == "" || cursor.Offset < 0 {
 		return cursor, ErrInvalidFeedCursor
 	}
 
