@@ -41,3 +41,10 @@ export interface DanmakuMessage {
 export interface HistoryPage { items: DanmakuMessage[]; next_cursor: number; has_more: boolean; }
 export interface ReplayPage { items: DanmakuMessage[]; next_seq: number; has_more: boolean; source: string; }
 export type ConnectionState = 'connecting' | 'open' | 'recovering' | 'closed' | 'error';
+
+
+export interface LiveFeedPage {
+  items: Room[];
+  next_cursor: string;
+  has_more: boolean;
+}

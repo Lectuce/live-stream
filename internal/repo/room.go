@@ -132,7 +132,7 @@ func SelectRankedRooms(ctx context.Context, limit int) ([]model.HotRoomDTO, erro
 			ids = append(ids, item.RoomID)
 			scores[item.RoomID] = item.Score
 		}
-		rooms, err := selectActiveRoomDTOsByIDs(ctx, ids)
+		rooms, err := SelectActiveRoomDTOsByIDs(ctx, ids)
 		if err != nil {
 			return nil, err
 		}
@@ -202,7 +202,7 @@ func selectNewestActiveRooms(ctx context.Context, limit int) ([]model.HotRoomDTO
 	return list, nil
 }
 
-func selectActiveRoomDTOsByIDs(ctx context.Context, roomIDs []uint64) ([]model.HotRoomDTO, error) {
+func SelectActiveRoomDTOsByIDs(ctx context.Context, roomIDs []uint64) ([]model.HotRoomDTO, error) {
 	if len(roomIDs) == 0 {
 		return nil, nil
 	}

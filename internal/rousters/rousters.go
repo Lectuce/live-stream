@@ -70,6 +70,11 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 			}
 		}
 
+		feeds := apiV1Group.Group("/feeds")
+		{
+			feeds.GET("/live/hot", handler.GetHotLiveFeed)
+		}
+
 	}
 
 }

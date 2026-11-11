@@ -1,5 +1,11 @@
-import type { ApiEnvelope, HistoryPage, ReplayPage, Room, User } from '@/lib/types';
-
+import type {
+  ApiEnvelope,
+  HistoryPage,
+  LiveFeedPage,
+  ReplayPage,
+  Room,
+  User,
+} from '@/lib/types';
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
@@ -36,4 +42,24 @@ export const api = {
   stopRoom: (base: string, id: number) => request<{ message: string }>(base, `/api/v1/rooms/${id}/stop`, { method: 'POST', body: '{}' }),
   history: (base: string, id: number, before = 0, limit = 50) => request<ApiEnvelope<HistoryPage>>(base, `/api/v1/rooms/${id}/messages?before_id=${before}&limit=${limit}`),
   replay: (base: string, id: number, afterSeq: number, limit = 200) => request<ApiEnvelope<ReplayPage>>(base, `/api/v1/rooms/${id}/messages/replay?after_seq=${afterSeq}&limit=${limit}`),
+
+  liveFeed: (
+    base: string,
+    cursor = '',
+    limit = 20,
+    signal?: AbortSignal,
+  ) => {
+    const params = new URLSearchParams({
+      limit: String(limit),
+    });
+
+    if (cursor) params.set('cursor', cursor);
+
+    return request<ApiEnvelope<LiveFeedPage>>(
+      base,
+      `/api/v1/feeds/live/hot?${params.toString()}`,
+      { signal },
+    );
+  },
+
 };
