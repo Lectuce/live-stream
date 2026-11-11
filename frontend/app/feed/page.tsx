@@ -192,16 +192,16 @@ export default function LiveFeedPage() {
     let disposed = false;
 
     queueMicrotask(() => {
-      if (!disposed) void refreshFeed(true);
+      if (!disposed) {
+        void refreshFeed(true);
+      }
     });
 
     return () => {
       disposed = true;
-      requestGenerationRef.current++;
-      refreshAbortRef.current?.abort();
-      loadMoreAbortRef.current?.abort();
+      cancelFeedRequests();
     };
-  }, [refreshFeed]);
+  }, [cancelFeedRequests, refreshFeed]);
 
   useEffect(() => {
     if (rooms.length === 0) {
