@@ -31,7 +31,7 @@ export function LiveRoom({ roomId }: { roomId: number }) {
   const [stopping, setStopping] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const oldestHistoryIDRef = useRef(0);
-  const { messages, appendMessages, connection, onlineCount, likeCount, deliveryMode, error, send, likeSendState } = useLiveRoom(apiBase, roomId, room?.status === 1, room?.like_count || 0);
+  const { messages, appendMessages, connection, onlineCount, likeCount, deliveryMode, roomStatus, error, send, likeSendState } = useLiveRoom(apiBase, roomId, room?.status === 1, room?.like_count || 0);
 
   const loadRoom = useCallback(async () => {
     setLoading(true); setPageError('');
@@ -56,6 +56,15 @@ export function LiveRoom({ roomId }: { roomId: number }) {
   useEffect(() => { queueMicrotask(() => void loadRoom()); }, [loadRoom]);
   useEffect(() => { if (room?.status === 1) queueMicrotask(() => void loadHistory(false)); }, [loadHistory, room?.status]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages.length]);
+  useEffect(() => {
+    if (roomStatus === null) return;
+
+    setRoom((current) =>
+      current ? { ...current, status: roomStatus } : current,
+    );
+  }, [roomStatus]);
+
+
 
   function submit(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();

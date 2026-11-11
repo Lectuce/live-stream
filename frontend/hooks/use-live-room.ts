@@ -9,6 +9,8 @@ const MAX_MESSAGES = 500;
 const CONNECTION_TIMEOUT_MS = 8000;
 const STABLE_CONNECTION_MS = 10000;
 const LIVE_STREAM_SUBPROTOCOL = 'vite-live-stream-v1';
+const [roomStatus, setRoomStatus] = useState<number | null>(null);
+
 
 type LikeSendState = 'idle' | 'accepted' | 'error';
 
@@ -198,6 +200,11 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
               applyLikeCountRef.current(Number(message.data?.like_count || 0));
             } else if (subtype === 'delivery_policy') {
               setDeliveryMode(message.data?.delivery_mode === 'sampled' ? 'sampled' : 'push');
+            } else if (subtype === 'room_status') {
+              const nextStatus = Number(message.data?.status);
+              if (nextStatus === 0 || nextStatus === 1) {
+                setRoomStatus(nextStatus);
+              }
             }
           } else if (message.type === 'resync_required') {
             void recoverRef.current(Number(message.after_seq || lastSeqRef.current));
@@ -334,5 +341,5 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
   }, []);
 
   const displayedLikeCount = Math.max(likeCount, initialLikeCount) + optimisticLikeCount;
-  return { messages, appendMessages: append, connection, onlineCount, likeCount: displayedLikeCount, deliveryMode, error, send, recover, likeSendState };
+  return { messages, appendMessages: append, connection, onlineCount, likeCount: displayedLikeCount, deliveryMode, roomStatus, error, send, recover, likeSendState };
 }
