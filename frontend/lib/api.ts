@@ -30,7 +30,15 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
 
 export const api = {
   listRooms: (base: string) => request<ApiEnvelope<Room[]>>(base, '/api/v1/rooms'),
-  roomDetail: (base: string, id: number) => request<ApiEnvelope<Room>>(base, `/api/v1/rooms/${id}`),
+  roomDetail: (
+    base: string,
+    id: number,
+    signal?: AbortSignal,
+  ) => request<ApiEnvelope<Room>>(
+    base,
+    `/api/v1/rooms/${id}`,
+    { signal },
+  ),
   myRoom: (base: string) => request<ApiEnvelope<Room | null>>(base, '/api/v1/rooms/mine'),
   me: (base: string) => request<ApiEnvelope<User>>(base, '/api/v1/auth/me'),
   login: (base: string, email: string, password: string) => request<ApiEnvelope<User>>(base, '/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),

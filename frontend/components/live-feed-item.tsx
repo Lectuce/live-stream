@@ -14,11 +14,37 @@ const backgrounds = [
   'from-[#1c3028] via-[#192326] to-[#0c111b]',
 ];
 
-type Props = { room: Room; index: number; total: number; active: boolean; apiBase: string };
+type Props = {
+  room: Room;
+  index: number;
+  total: number;
+  active: boolean;
+  apiBase: string;
+  onRoomEnded: (roomId: number) => void;
+};
 
-export function LiveFeedItem({ room, index, total, active, apiBase }: Props) {
-  const { messages, appendMessages, connection, onlineCount, likeCount, error } = useLiveRoom(
-    apiBase, room.room_id, active, room.like_count ?? room.praise_count ?? 0,
+
+  export function LiveFeedItem({
+    room,
+    index,
+    total,
+    active,
+    apiBase,
+    onRoomEnded,
+  }: Props) {
+  const {
+    messages,
+    appendMessages,
+    connection,
+    onlineCount,
+    likeCount,
+    roomStatus,
+    error,
+  } = useLiveRoom(
+    apiBase,
+    room.room_id,
+    active,
+    room.like_count ?? room.praise_count ?? 0,
   );
 
   useEffect(() => {
@@ -31,6 +57,19 @@ export function LiveFeedItem({ room, index, total, active, apiBase }: Props) {
     });
     return () => { cancelled = true; };
   }, [active, apiBase, room.room_id, appendMessages]);
+
+  useEffect(() => {
+    if (active && roomStatus === 0) {
+      onRoomEnded(room.room_id);
+    }
+  }, [
+    active,
+    onRoomEnded,
+    room.room_id,
+    roomStatus,
+  ]);
+
+
 
   const recentMessages = messages.slice(-6);
   const statusText = connection === 'open' ? '互动进行中' : connection === 'connecting' ? '正在加入' : connection === 'error' ? '互动暂时中断' : '等待进入';
