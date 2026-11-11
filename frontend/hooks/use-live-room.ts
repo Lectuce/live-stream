@@ -9,7 +9,7 @@ const MAX_MESSAGES = 500;
 const CONNECTION_TIMEOUT_MS = 8000;
 const STABLE_CONNECTION_MS = 10000;
 const LIVE_STREAM_SUBPROTOCOL = 'vite-live-stream-v1';
-const [roomStatus, setRoomStatus] = useState<number | null>(null);
+
 
 
 type LikeSendState = 'idle' | 'accepted' | 'error';
@@ -45,6 +45,7 @@ function createMessageID() {
 export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, initialLikeCount = 0) {
   const [messages, setMessages] = useState<DanmakuMessage[]>([]);
   const [connection, setConnection] = useState<ConnectionState>('closed');
+  const [roomStatus, setRoomStatus] = useState<number | null>(null);
   const [onlineCount, setOnlineCount] = useState(0);
   const [likeCount, setLikeCount] = useState(0);
   const [deliveryMode, setDeliveryMode] = useState<'push' | 'sampled'>('push');
