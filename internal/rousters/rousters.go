@@ -74,8 +74,6 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 		{
 			feeds.GET("/live/hot", handler.GetHotLiveFeed)
 
-			feeds.GET("/api/v1/feeds/videos")
-
 		}
 
 		videos := apiV1Group.Group("/videos")

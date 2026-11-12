@@ -44,7 +44,7 @@ export function VideoDetail({ videoId }: { videoId: string }) {
     <>
       <AppHeader />
       <main className="mx-auto max-w-5xl p-6">
-        <Link href="/videos" className="text-sm text-white/60">
+        <Link href="/video" className="text-sm text-white/60">
           返回视频列表
         </Link>
 

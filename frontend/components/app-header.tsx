@@ -21,6 +21,7 @@ export function AppHeader() {
             <span><span className="block text-sm font-black tracking-[.16em]">LIVE NOW</span><span className="hidden text-[10px] tracking-[.18em] text-white/35 sm:block">REALTIME STAGE</span></span>
           </Link>
           <nav className="flex items-center gap-2">
+            <Link href="/video" className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-white/65 transition hover:bg-white/5 hover:text-white sm:px-3">视频</Link>
             <Link href="/feed" className="inline-flex h-9 items-center gap-1.5 rounded-md px-2 text-xs font-semibold text-white/65 transition hover:bg-white/5 hover:text-white sm:px-3"><Compass className="size-4" /><span className="hidden sm:inline">发现房间</span></Link>
             {!loading && user ? <div className="flex items-center gap-2"><div className="hidden items-center gap-2 rounded-full border border-white/8 bg-white/4 py-1 pl-1 pr-3 sm:flex"><Avatar size="sm"><AvatarImage src={user.avatar_url || undefined} /><AvatarFallback>{user.user_name.slice(0, 1).toUpperCase()}</AvatarFallback></Avatar><span className="text-xs text-white/70">{user.user_name}</span></div><Button variant="ghost" size="icon" onClick={() => void logout()} aria-label="退出登录"><LogOut /></Button></div> : <Button size="sm" onClick={() => setAuthOpen(true)} className="bg-white text-black hover:bg-white/85"><UserRound /> 登录</Button>}
           </nav>
