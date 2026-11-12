@@ -10,6 +10,7 @@ type Video struct {
 	Description string `json:"description" gorm:"type:text"`
 	CoverURL    string `json:"cover_url" gorm:"size:500"`
 	PlayURL     string `json:"play_url" gorm:"size:500"`
+	MediaFile   string `json:"-" gorm:"size:100"`
 
 	DurationMS uint64 `json:"duration_ms"`
 

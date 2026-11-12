@@ -80,8 +80,11 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 		{
 			videos.GET("", handler.ListVideos)
 			videos.GET("/:video_id", handler.GetVideo)
+			videos.GET("/:video_id/media", handler.ServeVideoMedia)
+			videos.HEAD("/:video_id/media", handler.ServeVideoMedia)
 
 			videos.POST("", middleware.Auth, handler.CreateVideo)
+			videos.POST("/:video_id/upload", middleware.Auth, handler.UploadVideo)
 			videos.POST("/:video_id/publish", middleware.Auth, handler.PublishVideo)
 		}
 

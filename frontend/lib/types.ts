@@ -55,6 +55,7 @@ export interface Video {
   title: string;
   description: string;
   play_url: string;
+  duration_ms: number;
   process_status: string;
   publish_status: string;
   audit_status: string;

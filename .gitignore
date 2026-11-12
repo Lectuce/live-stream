@@ -4,6 +4,7 @@ live-stream
 .vscode/
 .env
 /test-results/
+/storage/videos/
 
 /docs/autumn-recruitment-project-review.md
 /docs/backend-development-guide.md

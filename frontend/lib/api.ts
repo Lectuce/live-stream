@@ -16,7 +16,9 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
   let response: Response;
   try {
     const headers = new Headers(init?.headers);
-    headers.set('Content-Type', 'application/json');
+    if (!(init?.body instanceof FormData)) {
+      headers.set('Content-Type', 'application/json');
+    }
     response = await fetch(`${baseUrl}${path}`, {
       ...init,
       credentials: 'include',
@@ -31,6 +33,21 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
 }
 
 export const api = {
+  createVideo: (base: string, title: string, description: string) =>
+    request<ApiEnvelope<Video>>(base, '/api/v1/videos', {
+      method: 'POST', body: JSON.stringify({ title, description }),
+    }),
+  uploadVideo: (base: string, id: string, file: File, signal?: AbortSignal) => {
+    const body = new FormData();
+    body.append('file', file);
+    return request<ApiEnvelope<Video>>(base, `/api/v1/videos/${encodeURIComponent(id)}/upload`, {
+      method: 'POST', body, signal,
+    });
+  },
+  publishVideo: (base: string, id: string) =>
+    request<{ message: string }>(base, `/api/v1/videos/${encodeURIComponent(id)}/publish`, {
+      method: 'POST', body: '{}',
+    }),
   listRooms: (base: string) => request<ApiEnvelope<Room[]>>(base, '/api/v1/rooms'),
   roomDetail: (
     base: string,

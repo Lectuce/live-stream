@@ -12,6 +12,14 @@ func CreateVideo(ctx context.Context, video *model.Video) error {
 	return dao.SC.Db.WithContext(ctx).Create(video).Error
 }
 
+// AttachVideoMedia only updates an author's draft. A concurrent publish wins safely.
+func AttachVideoMedia(ctx context.Context, id, ownerID uint64, filename, playURL string, duration uint64, audit string) (int64, error) {
+	result := dao.SC.Db.WithContext(ctx).Model(&model.Video{}).
+		Where("video_id = ? AND owner_id = ? AND publish_status = ? AND (media_file = '' OR media_file IS NULL)", id, ownerID, "draft").
+		Updates(map[string]any{"media_file": filename, "play_url": playURL, "duration_ms": duration, "process_status": "ready", "audit_status": audit})
+	return result.RowsAffected, result.Error
+}
+
 func SelectVideo(ctx context.Context, videoID uint64) (*model.Video, error) {
 	var video model.Video
 
