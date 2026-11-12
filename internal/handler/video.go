@@ -80,10 +80,23 @@ func GetVideo(c *gin.Context) {
 }
 
 func ListVideos(c *gin.Context) {
+	beforeID, limit, ok := parseVideoPage(c)
+	if !ok {
+		return
+	}
+	page, err := service.ListVideos(c.Request.Context(), beforeID, limit)
+	if err != nil {
+		videoError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": page, "message": "success"})
+}
+
+func parseVideoPage(c *gin.Context) (uint64, int, bool) {
 	limit, err := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	if err != nil || limit < 1 || limit > 50 {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "limit必须在1到50之间"})
-		return
+		return 0, 0, false
 	}
 
 	var beforeID uint64
@@ -91,11 +104,25 @@ func ListVideos(c *gin.Context) {
 		beforeID, err = strconv.ParseUint(value, 10, 64)
 		if err != nil || beforeID == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"message": "游标无效"})
-			return
+			return 0, 0, false
 		}
 	}
 
-	page, err := service.ListVideos(c.Request.Context(), beforeID, limit)
+	return beforeID, limit, true
+}
+
+func ListMyVideos(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	uid, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "未登录"})
+		return
+	}
+	beforeID, limit, ok := parseVideoPage(c)
+	if !ok {
+		return
+	}
+	page, err := service.ListOwnerVideos(c.Request.Context(), uid, beforeID, limit)
 	if err != nil {
 		videoError(c, err)
 		return
@@ -104,6 +131,25 @@ func ListVideos(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"data": page, "message": "success",
 	})
+}
+
+func GetMyVideo(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	uid, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "未登录"})
+		return
+	}
+	id, ok := parseVideoID(c)
+	if !ok {
+		return
+	}
+	video, err := service.GetOwnerVideo(c.Request.Context(), id, uid)
+	if err != nil {
+		videoError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": video, "message": "success"})
 }
 
 func PublishVideo(c *gin.Context) {

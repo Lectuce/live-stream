@@ -79,6 +79,8 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 		videos := apiV1Group.Group("/videos")
 		{
 			videos.GET("", handler.ListVideos)
+			videos.GET("/mine", middleware.Auth, handler.ListMyVideos)
+			videos.GET("/mine/:video_id", middleware.Auth, handler.GetMyVideo)
 			videos.GET("/:video_id", handler.GetVideo)
 			videos.GET("/:video_id/media", handler.ServeVideoMedia)
 			videos.HEAD("/:video_id/media", handler.ServeVideoMedia)

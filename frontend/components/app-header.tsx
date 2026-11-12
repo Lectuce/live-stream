@@ -21,6 +21,7 @@ export function AppHeader() {
             <span><span className="block text-sm font-black tracking-[.16em]">LIVE NOW</span><span className="hidden text-[10px] tracking-[.18em] text-white/35 sm:block">REALTIME STAGE</span></span>
           </Link>
           <nav className="flex items-center gap-2">
+            <Link href="/studio" className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-white/65 hover:text-white">创作中心</Link>
             <Link href="/upload" className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-white/65 hover:text-white">投稿</Link>
             <Link href="/video" className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-white/65 transition hover:bg-white/5 hover:text-white sm:px-3">视频</Link>
             <Link href="/feed" className="inline-flex h-9 items-center gap-1.5 rounded-md px-2 text-xs font-semibold text-white/65 transition hover:bg-white/5 hover:text-white sm:px-3"><Compass className="size-4" /><span className="hidden sm:inline">发现房间</span></Link>

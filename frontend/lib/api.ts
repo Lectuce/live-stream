@@ -7,6 +7,8 @@ import type {
   User,
   Video,
   VideoPage,
+  OwnerVideo,
+  OwnerVideoPage,
 } from '@/lib/types';
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -33,6 +35,17 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
 }
 
 export const api = {
+  myVideos: (base: string, cursor = '', signal?: AbortSignal) => {
+    const params = new URLSearchParams({ limit: '20' });
+    if (cursor) params.set('cursor', cursor);
+    return request<ApiEnvelope<OwnerVideoPage>>(base, `/api/v1/videos/mine?${params}`, {
+      signal, cache: 'no-store',
+    });
+  },
+  myVideoDetail: (base: string, id: string, signal?: AbortSignal) =>
+    request<ApiEnvelope<OwnerVideo>>(base, `/api/v1/videos/mine/${encodeURIComponent(id)}`, {
+      signal, cache: 'no-store',
+    }),
   createVideo: (base: string, title: string, description: string) =>
     request<ApiEnvelope<Video>>(base, '/api/v1/videos', {
       method: 'POST', body: JSON.stringify({ title, description }),

@@ -30,6 +30,24 @@ func SelectVideo(ctx context.Context, videoID uint64) (*model.Video, error) {
 	return &video, err
 }
 
+func SelectOwnerVideo(ctx context.Context, videoID, ownerID uint64) (*model.Video, error) {
+	var video model.Video
+	err := dao.SC.Db.WithContext(ctx).
+		Where("video_id = ? AND owner_id = ?", videoID, ownerID).
+		First(&video).Error
+	return &video, err
+}
+
+func SelectOwnerVideos(ctx context.Context, ownerID, beforeID uint64, limit int) ([]model.Video, error) {
+	videos := make([]model.Video, 0)
+	query := dao.SC.Db.WithContext(ctx).Where("owner_id = ?", ownerID)
+	if beforeID > 0 {
+		query = query.Where("video_id < ?", beforeID)
+	}
+	err := query.Order("video_id DESC").Limit(limit).Find(&videos).Error
+	return videos, err
+}
+
 func SelectPublishedVideos(
 	ctx context.Context,
 	beforeID uint64,

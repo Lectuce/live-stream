@@ -33,3 +33,15 @@ type VideoPage struct {
 	NextCursor string  `json:"next_cursor"`
 	HasMore    bool    `json:"has_more"`
 }
+
+// OwnerVideo exposes upload presence without disclosing the storage filename.
+type OwnerVideo struct {
+	Video
+	HasMedia bool `json:"has_media"`
+}
+
+type OwnerVideoPage struct {
+	Items      []OwnerVideo `json:"items"`
+	NextCursor string       `json:"next_cursor"`
+	HasMore    bool         `json:"has_more"`
+}

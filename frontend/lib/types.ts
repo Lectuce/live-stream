@@ -69,3 +69,10 @@ export interface VideoPage {
   next_cursor: string;
   has_more: boolean;
 }
+
+export interface OwnerVideo extends Video { has_media: boolean; }
+export interface OwnerVideoPage {
+  items: OwnerVideo[];
+  next_cursor: string;
+  has_more: boolean;
+}

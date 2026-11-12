@@ -74,6 +74,33 @@ func GetPublicVideo(
 	return video, nil
 }
 
+func GetOwnerVideo(ctx context.Context, videoID, ownerID uint64) (*model.OwnerVideo, error) {
+	video, err := repo.SelectOwnerVideo(ctx, videoID, ownerID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrVideoNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &model.OwnerVideo{Video: *video, HasMedia: video.MediaFile != ""}, nil
+}
+
+func ListOwnerVideos(ctx context.Context, ownerID, beforeID uint64, limit int) (*model.OwnerVideoPage, error) {
+	videos, err := repo.SelectOwnerVideos(ctx, ownerID, beforeID, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	page := &model.OwnerVideoPage{Items: make([]model.OwnerVideo, 0), HasMore: len(videos) > limit}
+	if page.HasMore {
+		videos = videos[:limit]
+		page.NextCursor = strconv.FormatUint(videos[len(videos)-1].VideoID, 10)
+	}
+	for _, video := range videos {
+		page.Items = append(page.Items, model.OwnerVideo{Video: video, HasMedia: video.MediaFile != ""})
+	}
+	return page, nil
+}
+
 func ListVideos(
 	ctx context.Context,
 	beforeID uint64,

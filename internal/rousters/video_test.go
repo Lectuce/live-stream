@@ -1,0 +1,20 @@
+package rousters
+
+import (
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+)
+
+func TestOwnerVideoRoutesRequireLogin(t *testing.T) {
+	r := gin.New()
+	SetUpRousters(r, nil)
+	for _, path := range []string{"/api/v1/videos/mine", "/api/v1/videos/mine/123"} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 401 {
+			t.Fatalf("%s: expected auth middleware (401), got %d: %s", path, w.Code, w.Body.String())
+		}
+	}
+}
