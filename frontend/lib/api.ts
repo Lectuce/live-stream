@@ -5,6 +5,8 @@ import type {
   ReplayPage,
   Room,
   User,
+  Video,
+  VideoPage,
 } from '@/lib/types';
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -69,5 +71,25 @@ export const api = {
       { signal },
     );
   },
+
+  videoDetail: (base: string, id: string, signal?: AbortSignal) =>
+    request<ApiEnvelope<Video>>(
+      base,
+      `/api/v1/videos/${encodeURIComponent(id)}`,
+      { signal },
+    ),
+
+  videoList: (base: string, cursor = '', signal?: AbortSignal) => {
+    const params = new URLSearchParams({ limit: '20' });
+    if (cursor) params.set('cursor', cursor);
+
+    return request<ApiEnvelope<VideoPage>>(
+      base,
+      `/api/v1/videos?${params.toString()}`,
+      { signal },
+    );
+  },
+
+
 
 };

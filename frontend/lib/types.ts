@@ -48,3 +48,23 @@ export interface LiveFeedPage {
   next_cursor: string;
   has_more: boolean;
 }
+
+export interface Video {
+  video_id: string;
+  owner_id: string;
+  title: string;
+  description: string;
+  play_url: string;
+  process_status: string;
+  publish_status: string;
+  audit_status: string;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VideoPage {
+  items: Video[];
+  next_cursor: string;
+  has_more: boolean;
+}

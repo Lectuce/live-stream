@@ -56,6 +56,11 @@ func Initdb() {
 	if err := db.AutoMigrate(&model.LikeAggregationCheckpoint{}); err != nil {
 		panic(fmt.Errorf("Database table LikeAggregationCheckpoint migration failed: %v", err))
 	}
+
+	if err := db.AutoMigrate(&model.Video{}); err != nil {
+		panic(fmt.Errorf("Database table video migration failed: %v", err))
+	}
+
 	if err := migrateDanmaSequences(db); err != nil {
 		panic(fmt.Errorf("Database danma sequence migration failed: %v", err))
 	}

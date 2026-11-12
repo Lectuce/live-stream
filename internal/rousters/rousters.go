@@ -73,6 +73,18 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 		feeds := apiV1Group.Group("/feeds")
 		{
 			feeds.GET("/live/hot", handler.GetHotLiveFeed)
+
+			feeds.GET("/api/v1/feeds/videos")
+
+		}
+
+		videos := apiV1Group.Group("/videos")
+		{
+			videos.GET("", handler.ListVideos)
+			videos.GET("/:video_id", handler.GetVideo)
+
+			videos.POST("", middleware.Auth, handler.CreateVideo)
+			videos.POST("/:video_id/publish", middleware.Auth, handler.PublishVideo)
 		}
 
 	}
