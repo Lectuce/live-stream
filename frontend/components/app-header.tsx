@@ -18,7 +18,7 @@ export function AppHeader() {
         <div className="mx-auto flex h-16 max-w-[1480px] items-center justify-between px-4 sm:px-6 lg:px-8">
           <Link href="/" className="flex items-center gap-3" aria-label="返回直播首页">
             <span className="grid size-9 place-items-center rounded-xl bg-[#ff4d3d] shadow-[0_0_25px_rgb(255_77_61/28%)]"><Radio className="size-5" /></span>
-            <span><span className="block text-sm font-black tracking-[.16em]">LIVE NOW</span><span className="hidden text-[10px] tracking-[.18em] text-white/35 sm:block">REALTIME STAGE</span></span>
+            <span className="hidden sm:block"><span className="block text-sm font-black tracking-[.16em]">LIVE NOW</span><span className="text-[10px] tracking-[.18em] text-white/35">REALTIME STAGE</span></span>
           </Link>
           <nav className="flex items-center gap-2">
             <Link href="/studio" className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-white/65 hover:text-white">创作中心</Link>

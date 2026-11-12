@@ -71,4 +71,13 @@
 .danmaku-fly { animation: danmaku-fly var(--fly-duration, 10s) linear forwards; }
 .glass { background: rgb(12 15 21 / 78%); backdrop-filter: blur(18px); }
 
+@layer components {
+  .creator-panel { @apply rounded-2xl border border-white/8 bg-[#0f1219]; }
+  .creator-nav { @apply flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium text-white/50 transition hover:bg-white/5 hover:text-white; }
+  .creator-nav-active { @apply bg-[#ff4d3d]/10 text-[#ff786c] hover:bg-[#ff4d3d]/15 hover:text-[#ff8a80]; }
+  .creator-primary { @apply inline-flex items-center justify-center gap-2 rounded-lg bg-[#ff4d3d] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#ff6356] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#ff786c] disabled:cursor-not-allowed disabled:opacity-45; }
+  .creator-secondary { @apply inline-flex items-center justify-center gap-2 rounded-lg border border-white/12 bg-white/[.025] px-4 py-2.5 text-sm font-medium text-white/65 transition hover:border-white/25 hover:bg-white/5 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#ff786c] disabled:cursor-not-allowed disabled:opacity-40; }
+  .creator-input { @apply w-full rounded-lg border border-white/10 bg-[#090c12] px-4 py-3 text-sm text-white/90 outline-none transition placeholder:text-white/25 focus:border-[#ff4d3d]/60 focus:ring-2 focus:ring-[#ff4d3d]/10 disabled:cursor-not-allowed disabled:text-white/45; }
+}
+
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; } }
