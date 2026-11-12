@@ -3,12 +3,12 @@ package model
 import "time"
 
 type RoomDetail struct {
-	RoomID    uint64     `json:"room_id" gorm:"primaryKey;autoIncrement"`
-	RoomTitle string     `json:"room_title" mapstructure:"room_title"`
-	Status    int        `json:"status" mapstructure:"status"`
-	OwnerID   int64      `json:"owner_id" mapstructure:"owner_id"`
-	OwnerName string     `json:"owner_username" mapstructure:"owner_username"`
-	StartAt   *time.Time `json:"start_at" mapstructure:"start_at"`
-	LikeCount int64      `json:"like_count" gorm:"column:like_count"`
-	PlayURL   string     `json:"play_url" mapstructure:"play_url"` // hls播放地址，详情接口返回
+	RoomID        uint64     `json:"room_id" gorm:"primaryKey;autoIncrement"`
+	RoomTitle     string     `json:"room_title" mapstructure:"room_title"`
+	Status        int        `json:"status" mapstructure:"status"`
+	OwnerID       int64      `json:"owner_id" mapstructure:"owner_id"`
+	OwnerUsername string     `json:"owner_username" mapstructure:"owner_username"`
+	StartAt       *time.Time `json:"start_at" mapstructure:"start_at"`
+	LikeCount     int64      `json:"like_count" gorm:"column:like_count"`
+	PlayURL       string     `json:"play_url" mapstructure:"play_url"` // hls播放地址，详情接口返回
 }
