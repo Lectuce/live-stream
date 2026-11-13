@@ -5,6 +5,7 @@ live-stream
 .env
 /test-results/
 /storage/videos/
+/docs/
 
 /docs/autumn-recruitment-project-review.md
 /docs/backend-development-guide.md
