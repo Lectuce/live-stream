@@ -11,6 +11,8 @@ import type {
   OwnerVideoPage,
   ReviewDetail,
   ReviewPage,
+  PublicUser,
+  FollowState,
 } from '@/lib/types';
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -37,6 +39,14 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
 }
 
 export const api = {
+  publicUser: (base: string, id: string, signal?: AbortSignal) =>
+    request<ApiEnvelope<PublicUser>>(base, `/api/v1/users/${encodeURIComponent(id)}`, { signal, cache: 'no-store' }),
+  authorVideos: (base: string, id: string, cursor = '', signal?: AbortSignal) =>
+    request<ApiEnvelope<VideoPage>>(base, `/api/v1/users/${encodeURIComponent(id)}/videos?${new URLSearchParams({ cursor, limit: '20' })}`, { signal, cache: 'no-store' }),
+  followState: (base: string, id: string, signal?: AbortSignal) =>
+    request<ApiEnvelope<FollowState>>(base, `/api/v1/users/${encodeURIComponent(id)}/follow`, { signal, cache: 'no-store' }),
+  setFollow: (base: string, id: string, follow: boolean, signal?: AbortSignal) =>
+    request<ApiEnvelope<FollowState>>(base, `/api/v1/users/${encodeURIComponent(id)}/follow`, { method: follow ? 'PUT' : 'DELETE', signal }),
   reviewList: (base: string, status: string, cursor: string, signal?: AbortSignal) =>
     request<ApiEnvelope<ReviewPage>>(base, `/api/v1/admin/videos?${new URLSearchParams({ status, cursor, limit: '20' })}`, { signal, cache: 'no-store' }),
   reviewDetail: (base: string, id: string, signal?: AbortSignal) =>

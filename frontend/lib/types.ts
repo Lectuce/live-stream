@@ -1,5 +1,16 @@
 export interface ApiEnvelope<T> { data: T; message: string; }
 
+export interface PublicUser {
+  user_id: string;
+  user_name: string;
+  avatar_url: string;
+  bio: string;
+  follower_count: number;
+  following_count: number;
+  video_count: number;
+}
+export interface FollowState { following: boolean; follower_count: number; }
+
 export interface User {
   role: 'user' | 'admin';
   user_id: number;

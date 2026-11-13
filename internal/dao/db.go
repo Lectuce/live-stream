@@ -47,6 +47,9 @@ func Initdb() {
 	if err := db.AutoMigrate(&model.User{}); err != nil {
 		panic(fmt.Errorf("Database table User migration failed: %v", err))
 	}
+	if err := db.AutoMigrate(&model.UserFollow{}); err != nil {
+		panic(fmt.Errorf("Database table UserFollow migration failed: %w", err))
+	}
 	if err := db.AutoMigrate(&model.Danma{}); err != nil {
 		panic(fmt.Errorf("Database table Danma migration failed: %v", err))
 	}

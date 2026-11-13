@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AppHeader } from '@/components/app-header';
+import { AuthorCard } from '@/components/author-card';
 import { useAuth } from '@/components/auth-provider';
 import { api } from '@/lib/api';
 import type { Video } from '@/lib/types';
@@ -57,9 +58,7 @@ export function VideoDetail({ videoId }: { videoId: string }) {
         {video && (
           <>
             <h1 className="mt-6 text-2xl font-bold">{video.title}</h1>
-            <p className="mt-2 text-sm text-white/50">
-              作者 #{video.owner_id}
-            </p>
+            <AuthorCard userId={video.owner_id} />
 
             <video
               key={video.video_id}
