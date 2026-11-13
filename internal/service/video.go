@@ -82,7 +82,8 @@ func GetOwnerVideo(ctx context.Context, videoID, ownerID uint64) (*model.OwnerVi
 	if err != nil {
 		return nil, err
 	}
-	return &model.OwnerVideo{Video: *video, HasMedia: video.MediaFile != ""}, nil
+	result := model.ToOwnerVideo(*video)
+	return &result, nil
 }
 
 func ListOwnerVideos(ctx context.Context, ownerID, beforeID uint64, limit int) (*model.OwnerVideoPage, error) {
@@ -96,7 +97,7 @@ func ListOwnerVideos(ctx context.Context, ownerID, beforeID uint64, limit int) (
 		page.NextCursor = strconv.FormatUint(videos[len(videos)-1].VideoID, 10)
 	}
 	for _, video := range videos {
-		page.Items = append(page.Items, model.OwnerVideo{Video: video, HasMedia: video.MediaFile != ""})
+		page.Items = append(page.Items, model.ToOwnerVideo(video))
 	}
 	return page, nil
 }

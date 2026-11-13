@@ -77,7 +77,7 @@ function SubmissionForm({ apiBase, initial }: { apiBase: string; initial: OwnerV
         setMessage('正在创建草稿…');
         const result = await api.createVideo(apiBase, title.trim(), description.trim());
         if (!active.current) return;
-        draft = { ...result.data, has_media: false };
+        draft = { ...result.data, has_media: false, audit_reason: '' };
         setVideo(draft);
         // Preserve the draft address even if uploading or the response fails.
         window.history.replaceState(window.history.state, '', `/upload?video_id=${encodeURIComponent(draft.video_id)}`);
@@ -88,7 +88,7 @@ function SubmissionForm({ apiBase, initial }: { apiBase: string; initial: OwnerV
       // Upload returns only state and media metadata, not title/description.
       setVideo({ ...draft, process_status: result.data.process_status, audit_status: result.data.audit_status,
         publish_status: result.data.publish_status, duration_ms: result.data.duration_ms,
-        play_url: result.data.play_url, has_media: true });
+        play_url: result.data.play_url, has_media: true, audit_reason: '' });
       setMessage('上传完成');
     } catch (err) {
       if (active.current) {
@@ -163,8 +163,8 @@ function SubmissionForm({ apiBase, initial }: { apiBase: string; initial: OwnerV
           <p className="mt-3 text-xs leading-6 text-white/40">完善信息并上传视频，审核通过后即可发布。</p>
           <div className="my-5 space-y-3 border-y border-white/8 py-4 text-xs">{[['视频文件', hasFile], ['视频标题', !!title.trim()], ['上传完成', !!video?.has_media]].map(([label, done]) => <div key={String(label)} className="flex items-center justify-between"><span className="text-white/50">{label}</span>{done ? <CheckCircle2 className="size-3.5 text-emerald-300" /> : <span className="text-white/25">待完成</span>}</div>)}</div>
           {video && <div className="mb-4 space-y-3"><div className="flex items-center justify-between"><VideoStatusBadge video={video} /><button type="button" disabled={busy} onClick={() => void refreshOrPublish()} className="inline-flex items-center gap-1 text-[11px] text-white/40 hover:text-white disabled:opacity-40"><RefreshCw className={`size-3 ${busy ? 'animate-spin' : ''}`} />刷新</button></div><p className="break-all text-[10px] text-white/25">稿件 ID · {video.video_id}</p></div>}
-          {video?.process_status === 'ready' && video.audit_status === 'pending' && <p className="mb-4 rounded-lg border border-amber-300/10 bg-amber-300/5 p-3 text-xs leading-6 text-amber-200/80">视频已上传，审核通过后才能发布。目前暂未开放审核处理，稿件会保留在创作中心。</p>}
-          {video?.audit_status === 'rejected' && <p className="mb-4 rounded-lg bg-red-400/5 p-3 text-xs leading-6 text-red-300">审核未通过，可修改标题和简介后保存，重新进入待审核。</p>}
+          {video?.process_status === 'ready' && video.audit_status === 'pending' && <p className="mb-4 rounded-lg border border-amber-300/10 bg-amber-300/5 p-3 text-xs leading-6 text-amber-200/80">视频已提交审核，通过后即可发布。点击刷新可查看最新结果。</p>}
+          {video?.audit_status === 'rejected' && <div className="mb-4 rounded-lg bg-red-400/5 p-3 text-xs leading-6 text-red-300"><p className="font-semibold">审核未通过</p><p className="mt-1 whitespace-pre-wrap break-words">{video.audit_reason || '请联系管理员了解原因'}</p><p className="mt-2 text-white/45">修改标题和简介后保存，将重新提交审核。若需修改视频文件，请新建投稿。</p></div>}
           {message && <output className="mb-4 flex items-start gap-2 text-xs leading-6 text-emerald-300">{busy && <LoaderCircle className="mt-1 size-3.5 shrink-0 animate-spin" />}{message}</output>}
           {error && <p role="alert" className="mb-4 rounded-lg border border-red-400/15 bg-red-400/5 p-3 text-xs leading-6 text-red-300">{error}</p>}
           <div className="space-y-3">

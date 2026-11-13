@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"live-stream/internal/config"
 	"live-stream/internal/middleware"
+	"live-stream/internal/model"
 	"live-stream/internal/service"
 )
 
@@ -161,6 +162,11 @@ func ServeVideoMedia(c *gin.Context) {
 		videoError(c, err)
 		return
 	}
+	serveStoredVideo(c, video)
+}
+
+func serveStoredVideo(c *gin.Context, video *model.Video) {
+	c.Header("Cache-Control", "private, no-store")
 	name := video.MediaFile
 	if name == "" || filepath.Base(name) != name || filepath.Ext(name) != ".mp4" {
 		c.Status(404)

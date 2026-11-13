@@ -27,6 +27,7 @@ func MutateOwnerVideo(ctx context.Context, id, ownerID uint64, mutate func(*mode
 		return tx.Model(&video).Updates(map[string]any{
 			"title": video.Title, "description": video.Description, "audit_status": video.AuditStatus,
 			"publish_status": video.PublishStatus, "published_at": video.PublishedAt,
+			"content_version": video.ContentVersion, "audit_reason": video.AuditReason, "submitted_at": video.SubmittedAt,
 		}).Error
 	})
 	return &video, err
@@ -41,7 +42,8 @@ func SoftDeleteOwnerVideo(ctx context.Context, id, ownerID uint64) (int64, error
 func AttachVideoMedia(ctx context.Context, id, ownerID uint64, filename, playURL string, duration uint64, audit string) (int64, error) {
 	result := dao.SC.Db.WithContext(ctx).Model(&model.Video{}).
 		Where("video_id = ? AND owner_id = ? AND publish_status = ? AND (media_file = '' OR media_file IS NULL)", id, ownerID, "draft").
-		Updates(map[string]any{"media_file": filename, "play_url": playURL, "duration_ms": duration, "process_status": "ready", "audit_status": audit})
+		Updates(map[string]any{"media_file": filename, "play_url": playURL, "duration_ms": duration, "process_status": "ready", "audit_status": audit,
+			"content_version": gorm.Expr("content_version + 1"), "audit_reason": "", "submitted_at": time.Now()})
 	return result.RowsAffected, result.Error
 }
 

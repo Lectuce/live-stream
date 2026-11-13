@@ -9,6 +9,8 @@ import type {
   VideoPage,
   OwnerVideo,
   OwnerVideoPage,
+  ReviewDetail,
+  ReviewPage,
 } from '@/lib/types';
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -35,6 +37,14 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
 }
 
 export const api = {
+  reviewList: (base: string, status: string, cursor: string, signal?: AbortSignal) =>
+    request<ApiEnvelope<ReviewPage>>(base, `/api/v1/admin/videos?${new URLSearchParams({ status, cursor, limit: '20' })}`, { signal, cache: 'no-store' }),
+  reviewDetail: (base: string, id: string, signal?: AbortSignal) =>
+    request<ApiEnvelope<ReviewDetail>>(base, `/api/v1/admin/videos/${encodeURIComponent(id)}`, { signal, cache: 'no-store' }),
+  submitReview: (base: string, id: string, version: string, decision: 'approved' | 'rejected', reason: string) =>
+    request<{ message: string }>(base, `/api/v1/admin/videos/${encodeURIComponent(id)}/review`, {
+      method: 'POST', body: JSON.stringify({ content_version: version, decision, reason }),
+    }),
   editVideo: (base: string, id: string, title: string, description: string) =>
     request<ApiEnvelope<OwnerVideo>>(base, `/api/v1/videos/${encodeURIComponent(id)}`, {
       method: 'PATCH', body: JSON.stringify({ title, description }),

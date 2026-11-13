@@ -1,6 +1,7 @@
 export interface ApiEnvelope<T> { data: T; message: string; }
 
 export interface User {
+  role: 'user' | 'admin';
   user_id: number;
   user_name: string;
   user_email: string;
@@ -50,6 +51,8 @@ export interface LiveFeedPage {
 }
 
 export interface Video {
+  content_version: string;
+  submitted_at: string | null;
   video_id: string;
   owner_id: string;
   title: string;
@@ -70,7 +73,14 @@ export interface VideoPage {
   has_more: boolean;
 }
 
-export interface OwnerVideo extends Video { has_media: boolean; }
+export interface OwnerVideo extends Video { has_media: boolean; audit_reason: string; }
+export interface ReviewVideo extends OwnerVideo { owner_username: string; }
+export interface ReviewRecord {
+  review_id: string; content_version: string; reviewer_id: string;
+  reviewer_type: string; decision: 'approved' | 'rejected'; reason: string; created_at: string;
+}
+export interface ReviewDetail extends ReviewVideo { reviews: ReviewRecord[]; }
+export interface ReviewPage { items: ReviewVideo[]; has_more: boolean; next_cursor: string; }
 export interface OwnerVideoPage {
   items: OwnerVideo[];
   next_cursor: string;

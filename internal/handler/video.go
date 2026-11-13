@@ -15,6 +15,10 @@ import (
 
 func videoError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, service.ErrReviewConflict):
+		c.JSON(http.StatusConflict, gin.H{"message": "稿件已修改或已处理，请重新加载并审核"})
+	case errors.Is(err, service.ErrReviewInput):
+		c.JSON(http.StatusBadRequest, gin.H{"message": "审核参数错误；拒绝时须填写1–1000字原因"})
 	case errors.Is(err, service.ErrVideoPublished):
 		c.JSON(http.StatusConflict, gin.H{"message": "请先下架视频，再修改标题和简介"})
 	case errors.Is(err, service.ErrVideoParams):

@@ -22,6 +22,7 @@ func UserReigister(ctx context.Context, registerRequest *model.RegisterRequest) 
 	}
 	var user model.User
 	user = model.User{
+		Role:         "user",
 		UserName:     registerRequest.UserName,
 		UserEmail:    registerRequest.UserEmail,
 		PasswordHash: hash,

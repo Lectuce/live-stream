@@ -3,6 +3,7 @@ package model
 import "time"
 
 type User struct {
+	Role         string    `json:"role" gorm:"size:20;not null;default:user"`
 	UserID       uint64    `json:"user_id" gorm:"primaryKey;autoIncrement"`
 	UserName     string    `json:"user_name" mapstructure:"user_name" gorm:"size:32;uniqueIndex:idx_users_username;not null"`
 	UserEmail    string    `json:"user_email" mapstructure:"email" gorm:"size:254;uniqueIndex:idx_users_email;not null"`

@@ -65,6 +65,7 @@ function MyVideos({ apiBase }: { apiBase: string }) {
           <div className="flex flex-wrap items-center gap-3"><VideoStatusBadge video={video} /><span className="text-[11px] text-white/30">{videoDate(video.created_at)} 创建</span></div>
           <Link href={`/upload?video_id=${encodeURIComponent(video.video_id)}`} className="mt-2.5 line-clamp-2 break-words text-[15px] font-semibold leading-6 transition hover:text-[#ff786c]">{video.title}</Link>
           <p className="mt-1.5 line-clamp-1 text-xs text-white/35">{video.description || '这条作品还没有简介'}</p>
+          {video.audit_status === 'rejected' && video.audit_reason && <p className="mt-2 line-clamp-2 break-words text-xs text-red-300/80">拒绝原因：{video.audit_reason}</p>}
           <p className="mt-3 text-[10px] tracking-wide text-white/25">稿件 ID · {video.video_id}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2 sm:flex-col sm:justify-center sm:items-stretch xl:min-w-28">

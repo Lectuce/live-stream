@@ -8,6 +8,7 @@ import (
 	"live-stream/internal/repo"
 	"os"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -35,6 +36,12 @@ func editVideoMetadata(video *model.Video, req model.UpdateVideoRequest, autoApp
 		return nil
 	}
 	video.Title, video.Description = title, description
+	video.ContentVersion++
+	video.AuditReason = ""
+	if video.ProcessStatus == "ready" && video.MediaFile != "" {
+		now := time.Now()
+		video.SubmittedAt = &now
+	}
 	video.AuditStatus = "pending"
 	if autoApprove && video.ProcessStatus == "ready" && video.PlayURL != "" {
 		video.AuditStatus = "approved"
@@ -52,7 +59,8 @@ func EditVideo(ctx context.Context, id, ownerID uint64, req model.UpdateVideoReq
 	if err != nil {
 		return nil, err
 	}
-	return &model.OwnerVideo{Video: *video, HasMedia: video.MediaFile != ""}, nil
+	result := model.ToOwnerVideo(*video)
+	return &result, nil
 }
 
 func UnpublishVideo(ctx context.Context, id, ownerID uint64) (*model.OwnerVideo, error) {
@@ -70,7 +78,8 @@ func UnpublishVideo(ctx context.Context, id, ownerID uint64) (*model.OwnerVideo,
 	if err != nil {
 		return nil, err
 	}
-	return &model.OwnerVideo{Video: *video, HasMedia: video.MediaFile != ""}, nil
+	result := model.ToOwnerVideo(*video)
+	return &result, nil
 }
 
 func DeleteVideo(ctx context.Context, id, ownerID uint64) error {

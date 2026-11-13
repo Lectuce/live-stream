@@ -7,7 +7,7 @@ import { AppHeader } from '@/components/app-header';
 import { AuthDialog } from '@/components/auth-dialog';
 import { useAuth } from '@/components/auth-provider';
 
-export function CreatorShell({ active, children }: { active: 'studio' | 'upload'; children: ReactNode }) {
+export function CreatorShell({ active, children }: { active: 'studio' | 'upload' | 'review'; children: ReactNode }) {
   const { user } = useAuth();
   return <>
     <AppHeader />
@@ -18,9 +18,10 @@ export function CreatorShell({ active, children }: { active: 'studio' | 'upload'
             <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-[#ff4d3d]/20 bg-[#ff4d3d]/10 text-[#ff786c]"><Clapperboard className="size-5" /></div>
             <div className="min-w-0"><p className="truncate text-sm font-semibold">{user?.user_name || '创作者工作台'}</p><p className="mt-1 text-[10px] tracking-[.14em] text-white/35">CREATOR STUDIO</p></div>
           </div>
-          <nav aria-label="创作导航" className="flex gap-2 lg:flex-col">
+          <nav aria-label="创作导航" className="flex flex-wrap gap-2 lg:flex-col">
             <Link href="/upload" aria-current={active === 'upload' ? 'page' : undefined} className={`creator-nav ${active === 'upload' ? 'creator-nav-active' : ''}`}><Upload className="size-4" />发布视频</Link>
             <Link href="/studio" aria-current={active === 'studio' ? 'page' : undefined} className={`creator-nav ${active === 'studio' ? 'creator-nav-active' : ''}`}><LayoutDashboard className="size-4" />稿件管理</Link>
+            {user?.role === 'admin' && <Link href="/admin/videos" aria-current={active === 'review' ? 'page' : undefined} className={`creator-nav ${active === 'review' ? 'creator-nav-active' : ''}`}><FileVideo className="size-4" />视频审核</Link>}
             <Link href="/video" className="creator-nav hidden lg:flex"><FileVideo className="size-4" />视频广场<ArrowUpRight className="ml-auto size-3.5 text-white/30" /></Link>
           </nav>
           <div className="mt-12 hidden rounded-xl border border-white/8 bg-white/[.025] p-4 lg:block">

@@ -17,9 +17,12 @@ type Video struct {
 
 	DurationMS uint64 `json:"duration_ms"`
 
-	ProcessStatus string `json:"process_status" gorm:"size:20;not null;default:pending"`
-	PublishStatus string `json:"publish_status" gorm:"size:20;not null;default:draft"`
-	AuditStatus   string `json:"audit_status" gorm:"size:20;not null;default:pending"`
+	ProcessStatus  string     `json:"process_status" gorm:"size:20;not null;default:pending"`
+	PublishStatus  string     `json:"publish_status" gorm:"size:20;not null;default:draft"`
+	AuditStatus    string     `json:"audit_status" gorm:"size:20;not null;default:pending"`
+	ContentVersion uint64     `json:"content_version,string" gorm:"not null;default:1"`
+	AuditReason    string     `json:"-" gorm:"size:1000"`
+	SubmittedAt    *time.Time `json:"submitted_at"`
 
 	PublishedAt *time.Time     `json:"published_at"`
 	CreatedAt   time.Time      `json:"created_at"`
@@ -46,7 +49,12 @@ type VideoPage struct {
 // OwnerVideo exposes upload presence without disclosing the storage filename.
 type OwnerVideo struct {
 	Video
-	HasMedia bool `json:"has_media"`
+	HasMedia    bool   `json:"has_media"`
+	AuditReason string `json:"audit_reason"`
+}
+
+func ToOwnerVideo(v Video) OwnerVideo {
+	return OwnerVideo{Video: v, HasMedia: v.MediaFile != "", AuditReason: v.AuditReason}
 }
 
 type OwnerVideoPage struct {
