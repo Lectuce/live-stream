@@ -4,12 +4,37 @@ import (
 	"context"
 	"time"
 
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"live-stream/internal/dao"
 	"live-stream/internal/model"
 )
 
 func CreateVideo(ctx context.Context, video *model.Video) error {
 	return dao.SC.Db.WithContext(ctx).Create(video).Error
+}
+
+// Serialize metadata edits with publishing, uploading and deleting the same row.
+func MutateOwnerVideo(ctx context.Context, id, ownerID uint64, mutate func(*model.Video) error) (*model.Video, error) {
+	var video model.Video
+	err := dao.SC.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("video_id = ? AND owner_id = ?", id, ownerID).First(&video).Error; err != nil {
+			return err
+		}
+		if err := mutate(&video); err != nil {
+			return err
+		}
+		return tx.Model(&video).Updates(map[string]any{
+			"title": video.Title, "description": video.Description, "audit_status": video.AuditStatus,
+			"publish_status": video.PublishStatus, "published_at": video.PublishedAt,
+		}).Error
+	})
+	return &video, err
+}
+
+func SoftDeleteOwnerVideo(ctx context.Context, id, ownerID uint64) (int64, error) {
+	result := dao.SC.Db.WithContext(ctx).Where("video_id = ? AND owner_id = ?", id, ownerID).Delete(&model.Video{})
+	return result.RowsAffected, result.Error
 }
 
 // AttachVideoMedia only updates an author's draft. A concurrent publish wins safely.

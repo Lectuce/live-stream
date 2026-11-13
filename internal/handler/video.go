@@ -15,6 +15,10 @@ import (
 
 func videoError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, service.ErrVideoPublished):
+		c.JSON(http.StatusConflict, gin.H{"message": "请先下架视频，再修改标题和简介"})
+	case errors.Is(err, service.ErrVideoParams):
+		c.JSON(http.StatusBadRequest, gin.H{"message": "标题须为1–100个字符，简介最多5000个字符，至少提交一个修改字段"})
 	case errors.Is(err, service.ErrVideoTitle):
 		c.JSON(http.StatusBadRequest, gin.H{"message": "视频标题不能为空"})
 	case errors.Is(err, service.ErrVideoNotFound):
@@ -63,6 +67,7 @@ func CreateVideo(c *gin.Context) {
 }
 
 func GetVideo(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
 	id, ok := parseVideoID(c)
 	if !ok {
 		return
@@ -80,6 +85,7 @@ func GetVideo(c *gin.Context) {
 }
 
 func ListVideos(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
 	beforeID, limit, ok := parseVideoPage(c)
 	if !ok {
 		return

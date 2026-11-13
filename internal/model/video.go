@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"gorm.io/gorm"
+	"time"
+)
 
 type Video struct {
 	VideoID uint64 `json:"video_id,string" gorm:"primaryKey;autoIncrement"`
@@ -18,9 +21,15 @@ type Video struct {
 	PublishStatus string `json:"publish_status" gorm:"size:20;not null;default:draft"`
 	AuditStatus   string `json:"audit_status" gorm:"size:20;not null;default:pending"`
 
-	PublishedAt *time.Time `json:"published_at"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	PublishedAt *time.Time     `json:"published_at"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
+}
+
+type UpdateVideoRequest struct {
+	Title       *string `json:"title"`
+	Description *string `json:"description"`
 }
 
 type CreateVideoRequest struct {

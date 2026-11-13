@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, ChevronLeft, ChevronRight, Clapperboard, FileVideo, Film, Plus, RefreshCw, Search, SlidersHorizontal } from 'lucide-react';
 import { CreatorAccess, CreatorShell } from '@/components/creator-shell';
+import { VideoManageActions } from '@/components/video-manage-actions';
 import { VideoStatusBadge, videoDate, videoDuration } from '@/components/creator-video-ui';
 import { useAuth } from '@/components/auth-provider';
 import { api } from '@/lib/api';
@@ -69,6 +70,7 @@ function MyVideos({ apiBase }: { apiBase: string }) {
         <div className="flex shrink-0 items-center gap-2 sm:flex-col sm:justify-center sm:items-stretch xl:min-w-28">
           <Link href={`/upload?video_id=${encodeURIComponent(video.video_id)}`} className={canPublishVideo(video) ? 'creator-primary' : 'creator-secondary'}>{canPublishVideo(video) ? '去发布' : !video.has_media && video.publish_status === 'draft' ? '继续投稿' : '管理稿件'}<ArrowRight className="size-3.5" /></Link>
           {isPublicVideo(video) && <Link href={`/video/${video.video_id}`} className="px-3 py-2 text-center text-xs text-white/40 transition hover:text-white">观看视频 ↗</Link>}
+          <VideoManageActions video={video} apiBase={apiBase} onChanged={() => setRefresh(value => value + 1)} />
         </div>
       </article>)}
     </div>

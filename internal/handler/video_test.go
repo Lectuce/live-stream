@@ -2,10 +2,26 @@ package handler
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 )
+
+func TestEditVideoRejectsUnknownFieldsAndMalformedJSON(t *testing.T) {
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("user_id", uint64(1)); c.Next() })
+	r.PATCH("/videos/:video_id", EditVideo)
+	for _, body := range []string{`{"title":"x","audit_status":"approved"}`, `{"owner_id":"2"}`, `{"title":123}`, `{} {}`, `{`} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("PATCH", "/videos/1", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		if w.Code != 400 {
+			t.Fatalf("body=%s status=%d", body, w.Code)
+		}
+	}
+}
 
 func TestVideoPageRejectsInvalidParameters(t *testing.T) {
 	for _, query := range []string{"limit=0", "limit=51", "limit=abc", "cursor=0", "cursor=-1", "cursor=invalid", "cursor=18446744073709551616"} {

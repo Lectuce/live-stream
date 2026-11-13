@@ -88,6 +88,9 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 			videos.POST("", middleware.Auth, handler.CreateVideo)
 			videos.POST("/:video_id/upload", middleware.Auth, handler.UploadVideo)
 			videos.POST("/:video_id/publish", middleware.Auth, handler.PublishVideo)
+			videos.PATCH("/:video_id", middleware.Auth, handler.EditVideo)
+			videos.POST("/:video_id/unpublish", middleware.Auth, handler.UnpublishVideo)
+			videos.DELETE("/:video_id", middleware.Auth, handler.DeleteVideo)
 		}
 
 	}

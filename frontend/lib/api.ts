@@ -35,6 +35,16 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
 }
 
 export const api = {
+  editVideo: (base: string, id: string, title: string, description: string) =>
+    request<ApiEnvelope<OwnerVideo>>(base, `/api/v1/videos/${encodeURIComponent(id)}`, {
+      method: 'PATCH', body: JSON.stringify({ title, description }),
+    }),
+  unpublishVideo: (base: string, id: string) =>
+    request<ApiEnvelope<OwnerVideo>>(base, `/api/v1/videos/${encodeURIComponent(id)}/unpublish`, {
+      method: 'POST', body: '{}',
+    }),
+  deleteVideo: (base: string, id: string) =>
+    request<{ message: string }>(base, `/api/v1/videos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   myVideos: (base: string, cursor = '', signal?: AbortSignal) => {
     const params = new URLSearchParams({ limit: '20' });
     if (cursor) params.set('cursor', cursor);

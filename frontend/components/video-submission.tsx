@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { VideoManageActions } from '@/components/video-manage-actions';
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, CircleHelp, FileVideo, Film, Info, LoaderCircle, RefreshCw, Send, UploadCloud } from 'lucide-react';
 import { CreatorAccess, CreatorShell } from '@/components/creator-shell';
 import { VideoStatusBadge, videoDuration } from '@/components/creator-video-ui';
@@ -11,6 +13,7 @@ import type { OwnerVideo } from '@/lib/types';
 import { canPublishVideo, isPublicVideo } from '@/lib/video-status';
 
 function SubmissionForm({ apiBase, initial }: { apiBase: string; initial: OwnerVideo | null }) {
+  const router = useRouter();
   const [video, setVideo] = useState(initial);
   const [title, setTitle] = useState(initial?.title ?? '');
   const [description, setDescription] = useState(initial?.description ?? '');
@@ -22,6 +25,20 @@ function SubmissionForm({ apiBase, initial }: { apiBase: string; initial: OwnerV
   const [error, setError] = useState('');
   const active = useRef(true);
   const inFlight = useRef(false);
+  const dirty = !!video && (title.trim() !== video.title || description.trim() !== video.description);
+
+  async function saveMetadata() {
+    if (!video || inFlight.current) return;
+    inFlight.current = true; setBusy(true); setError(''); setMessage('');
+    try {
+      const result = await api.editVideo(apiBase, video.video_id, title, description);
+      if (active.current) {
+        setVideo(result.data); setTitle(result.data.title); setDescription(result.data.description);
+        setMessage(result.data.audit_status === 'pending' && result.data.has_media ? '修改已保存，稿件需要重新审核' : '修改已保存');
+      }
+    } catch (err) { if (active.current) setError(err instanceof Error ? err.message : '保存失败'); }
+    finally { inFlight.current = false; if (active.current) setBusy(false); }
+  }
   useEffect(() => {
     active.current = true;
     return () => { active.current = false; };
@@ -46,6 +63,7 @@ function SubmissionForm({ apiBase, initial }: { apiBase: string; initial: OwnerV
   async function upload(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     if (inFlight.current) return;
+    if (dirty) { setError('请先保存标题和简介，再上传视频'); return; }
     setError('');
     if (!file || !title.trim()) { setError('请填写标题并选择视频'); return; }
     if (!file.name.toLowerCase().endsWith('.mp4') || file.size === 0 || file.size > 100 * 1024 * 1024) {
@@ -85,6 +103,7 @@ function SubmissionForm({ apiBase, initial }: { apiBase: string; initial: OwnerV
 
   async function refreshOrPublish(publish = false) {
     if (!video || inFlight.current) return;
+    if (dirty) { setError('请先保存修改，再刷新或发布'); return; }
     inFlight.current = true;
     setBusy(true); setError(''); setMessage('');
     try {
@@ -132,9 +151,9 @@ function SubmissionForm({ apiBase, initial }: { apiBase: string; initial: OwnerV
         <section className="creator-panel overflow-hidden">
           <div className="flex items-center justify-between border-b border-white/8 px-5 py-4 sm:px-6"><h2 className="text-sm font-semibold">基本信息</h2><span className="text-xs text-white/30">让观众更快发现你的作品</span></div>
           <div className="space-y-6 p-5 sm:p-6">
-            <label htmlFor="submission-title" aria-label="视频标题" className="block"><span className="mb-2.5 flex items-center justify-between text-sm"><span>视频标题 <span className="text-[#ff786c]">*</span></span><span className="text-[11px] tabular-nums text-white/30">{title.length} / 100</span></span><input id="submission-title" required maxLength={100} placeholder="给作品起一个让人想点开的名字" value={title} disabled={busy || !!video} onChange={event => setTitle(event.target.value)} className="creator-input" /></label>
-            <label htmlFor="submission-description" aria-label="视频简介" className="block"><span className="mb-2.5 flex items-center justify-between text-sm"><span>视频简介 <span className="ml-1 text-xs text-white/30">选填</span></span><span className="text-[11px] tabular-nums text-white/30">{description.length} / 5000</span></span><textarea id="submission-description" maxLength={5000} rows={5} placeholder="聊聊视频的内容、创作灵感，或者你想对观众说的话…" value={description} disabled={busy || !!video} onChange={event => setDescription(event.target.value)} className="creator-input min-h-32 resize-y leading-6" /></label>
-            {video && <p className="flex items-start gap-2 text-xs leading-5 text-white/40"><Info className="mt-0.5 size-3.5 shrink-0" />信息已保存，当前暂不支持修改标题和简介。</p>}
+            <label htmlFor="submission-title" aria-label="视频标题" className="block"><span className="mb-2.5 flex items-center justify-between text-sm"><span>视频标题 <span className="text-[#ff786c]">*</span></span><span className="text-[11px] tabular-nums text-white/30">{title.length} / 100</span></span><input id="submission-title" required maxLength={100} placeholder="给作品起一个让人想点开的名字" value={title} disabled={busy || (!!video && video.publish_status !== 'draft')} onChange={event => setTitle(event.target.value)} className="creator-input" /></label>
+            <label htmlFor="submission-description" aria-label="视频简介" className="block"><span className="mb-2.5 flex items-center justify-between text-sm"><span>视频简介 <span className="ml-1 text-xs text-white/30">选填</span></span><span className="text-[11px] tabular-nums text-white/30">{description.length} / 5000</span></span><textarea id="submission-description" maxLength={5000} rows={5} placeholder="聊聊视频的内容、创作灵感，或者你想对观众说的话…" value={description} disabled={busy || (!!video && video.publish_status !== 'draft')} onChange={event => setDescription(event.target.value)} className="creator-input min-h-32 resize-y leading-6" /></label>
+            {video && <div className="space-y-3"><p className="flex items-start gap-2 text-xs leading-5 text-white/40"><Info className="mt-0.5 size-3.5 shrink-0" />{video.publish_status === 'published' ? '已发布视频请先下架，再修改信息。' : '修改后请保存；正式审核模式下，内容变更需要重新审核。'}</p>{video.publish_status === 'draft' && <button type="button" onClick={() => void saveMetadata()} disabled={busy || !dirty || !title.trim()} className="creator-secondary">{busy ? '正在处理…' : dirty ? '保存修改' : '已保存'}</button>}</div>}
           </div>
         </section>
       </div>
@@ -145,14 +164,19 @@ function SubmissionForm({ apiBase, initial }: { apiBase: string; initial: OwnerV
           <div className="my-5 space-y-3 border-y border-white/8 py-4 text-xs">{[['视频文件', hasFile], ['视频标题', !!title.trim()], ['上传完成', !!video?.has_media]].map(([label, done]) => <div key={String(label)} className="flex items-center justify-between"><span className="text-white/50">{label}</span>{done ? <CheckCircle2 className="size-3.5 text-emerald-300" /> : <span className="text-white/25">待完成</span>}</div>)}</div>
           {video && <div className="mb-4 space-y-3"><div className="flex items-center justify-between"><VideoStatusBadge video={video} /><button type="button" disabled={busy} onClick={() => void refreshOrPublish()} className="inline-flex items-center gap-1 text-[11px] text-white/40 hover:text-white disabled:opacity-40"><RefreshCw className={`size-3 ${busy ? 'animate-spin' : ''}`} />刷新</button></div><p className="break-all text-[10px] text-white/25">稿件 ID · {video.video_id}</p></div>}
           {video?.process_status === 'ready' && video.audit_status === 'pending' && <p className="mb-4 rounded-lg border border-amber-300/10 bg-amber-300/5 p-3 text-xs leading-6 text-amber-200/80">视频已上传，审核通过后才能发布。目前暂未开放审核处理，稿件会保留在创作中心。</p>}
-          {video?.audit_status === 'rejected' && <p className="mb-4 rounded-lg bg-red-400/5 p-3 text-xs leading-6 text-red-300">审核未通过，暂不支持修改后重新提交。</p>}
+          {video?.audit_status === 'rejected' && <p className="mb-4 rounded-lg bg-red-400/5 p-3 text-xs leading-6 text-red-300">审核未通过，可修改标题和简介后保存，重新进入待审核。</p>}
           {message && <output className="mb-4 flex items-start gap-2 text-xs leading-6 text-emerald-300">{busy && <LoaderCircle className="mt-1 size-3.5 shrink-0 animate-spin" />}{message}</output>}
           {error && <p role="alert" className="mb-4 rounded-lg border border-red-400/15 bg-red-400/5 p-3 text-xs leading-6 text-red-300">{error}</p>}
           <div className="space-y-3">
-            {canUpload && <button type="submit" disabled={busy || !file} className="creator-primary w-full">{busy ? <LoaderCircle className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}{busy ? '正在处理…' : video ? '继续上传' : '上传视频'}</button>}
-            {video && canPublishVideo(video) && <button type="button" disabled={busy} onClick={() => void refreshOrPublish(true)} className="creator-primary w-full"><Send className="size-4" />{busy ? '正在发布…' : '发布视频'}</button>}
+            {dirty && <p className="text-xs text-amber-200">有未保存的修改，请先点击“保存修改”。</p>}
+            {canUpload && <button type="submit" disabled={busy || !file || dirty} className="creator-primary w-full">{busy ? <LoaderCircle className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}{busy ? '正在处理…' : video ? '继续上传' : '上传视频'}</button>}
+            {video && canPublishVideo(video) && <button type="button" disabled={busy || dirty} onClick={() => void refreshOrPublish(true)} className="creator-primary w-full"><Send className="size-4" />{busy ? '正在发布…' : '发布视频'}</button>}
             {video && isPublicVideo(video) && <Link href={`/video/${video.video_id}`} className="creator-primary w-full">查看作品<ArrowRight className="size-4" /></Link>}
             <Link href="/studio" className="creator-secondary w-full">返回稿件管理</Link>
+            {video && <VideoManageActions video={video} apiBase={apiBase} disabled={busy || dirty} onChanged={next => {
+              if (!next) { router.replace('/studio'); return; }
+              setVideo(next); setTitle(next.title); setDescription(next.description); setMessage('已下架，可修改信息或再次发布'); setError('');
+            }} />}
           </div>
           <p className="mt-4 text-center text-[10px] leading-5 text-white/30">{busy ? '上传期间请保持页面打开' : video ? '草稿已保存，可从创作中心继续' : '请上传你有权分享的视频内容'}</p>
         </section>

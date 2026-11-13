@@ -17,4 +17,13 @@ func TestOwnerVideoRoutesRequireLogin(t *testing.T) {
 			t.Fatalf("%s: expected auth middleware (401), got %d: %s", path, w.Code, w.Body.String())
 		}
 	}
+	for _, route := range []struct{ method, path string }{
+		{"PATCH", "/api/v1/videos/123"}, {"POST", "/api/v1/videos/123/unpublish"}, {"DELETE", "/api/v1/videos/123"},
+	} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(route.method, route.path, nil))
+		if w.Code != 401 {
+			t.Fatalf("%s %s: expected 401 got %d", route.method, route.path, w.Code)
+		}
+	}
 }
