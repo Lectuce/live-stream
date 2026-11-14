@@ -17,6 +17,7 @@ import type {
   Post,
   PostPage,
   PostImage,
+  CommentPage,
 } from '@/lib/types';
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -43,6 +44,12 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
 }
 
 export const api = {
+  comments: (base: string, videoID: string, root = '', cursor = '', signal?: AbortSignal) =>
+    request<ApiEnvelope<CommentPage>>(base, `/api/v1/videos/${encodeURIComponent(videoID)}/comments${root ? `/${encodeURIComponent(root)}/replies` : ''}?${new URLSearchParams({ cursor, limit: '20' })}`, { signal, cache: 'no-store' }),
+  createComment: (base: string, videoID: string, content: string, parentID: string, requestID: string, signal?: AbortSignal) =>
+    request<ApiEnvelope<{ comment_id: string }>>(base, `/api/v1/videos/${encodeURIComponent(videoID)}/comments`, { method: 'POST', body: JSON.stringify({ content, parent_id: parentID, request_id: requestID }), signal }),
+  deleteComment: (base: string, videoID: string, id: string, signal?: AbortSignal) =>
+    request<{ message: string }>(base, `/api/v1/videos/${encodeURIComponent(videoID)}/comments/${encodeURIComponent(id)}`, { method: 'DELETE', signal }),
   followingFeed: (base: string, cursor = '', signal?: AbortSignal) =>
     request<ApiEnvelope<FollowingFeedPage>>(base, `/api/v1/feeds/following?${new URLSearchParams({ cursor, limit: '20' })}`, { signal, cache: 'no-store' }),
   createPost: (base: string, signal?: AbortSignal) => request<ApiEnvelope<Post>>(base, '/api/v1/posts', { method: 'POST', signal }),
