@@ -19,6 +19,7 @@ export function CreatorShell({ active, children }: { active: 'studio' | 'upload'
             <div className="min-w-0"><p className="truncate text-sm font-semibold">{user?.user_name || '创作者工作台'}</p><p className="mt-1 text-[10px] tracking-[.14em] text-white/35">CREATOR STUDIO</p></div>
           </div>
           <nav aria-label="创作导航" className="flex flex-wrap gap-2 lg:flex-col">
+            <Link href="/posts" className="creator-nav"><FileVideo className="size-4" />图文管理</Link>
             <Link href="/upload" aria-current={active === 'upload' ? 'page' : undefined} className={`creator-nav ${active === 'upload' ? 'creator-nav-active' : ''}`}><Upload className="size-4" />发布视频</Link>
             <Link href="/studio" aria-current={active === 'studio' ? 'page' : undefined} className={`creator-nav ${active === 'studio' ? 'creator-nav-active' : ''}`}><LayoutDashboard className="size-4" />稿件管理</Link>
             {user?.role === 'admin' && <Link href="/admin/videos" aria-current={active === 'review' ? 'page' : undefined} className={`creator-nav ${active === 'review' ? 'creator-nav-active' : ''}`}><FileVideo className="size-4" />视频审核</Link>}

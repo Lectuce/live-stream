@@ -73,15 +73,29 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 		feeds := apiV1Group.Group("/feeds")
 		{
 			feeds.GET("/live/hot", handler.GetHotLiveFeed)
+			feeds.GET("/following", middleware.Auth, handler.GetFollowingFeed)
 
 		}
 
 		users := apiV1Group.Group("/users")
 		users.GET("/:user_id", handler.GetPublicUser)
 		users.GET("/:user_id/videos", handler.ListPublicAuthorVideos)
+		users.GET("/:user_id/posts", handler.ListAuthorPosts)
 		users.GET("/:user_id/follow", middleware.Auth, handler.UserFollow)
 		users.PUT("/:user_id/follow", middleware.Auth, handler.UserFollow)
 		users.DELETE("/:user_id/follow", middleware.Auth, handler.UserFollow)
+
+		posts := apiV1Group.Group("/posts")
+		posts.GET("/images/:image_id", handler.ServePostImage)
+		posts.HEAD("/images/:image_id", handler.ServePostImage)
+		posts.POST("/images", middleware.Auth, handler.UploadPostImage)
+		posts.GET("/mine", middleware.Auth, handler.ListMyPosts)
+		posts.GET("/mine/:post_id", middleware.Auth, handler.GetMyPost)
+		posts.GET("/:post_id", handler.GetPost)
+		posts.POST("", middleware.Auth, handler.CreatePost)
+		posts.PATCH("/:post_id", middleware.Auth, handler.EditPost)
+		posts.POST("/:post_id/publish", middleware.Auth, handler.PublishPost)
+		posts.DELETE("/:post_id", middleware.Auth, handler.DeletePost)
 
 		videos := apiV1Group.Group("/videos")
 		admin := apiV1Group.Group("/admin", middleware.Auth, middleware.RequireAdmin)

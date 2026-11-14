@@ -9,6 +9,7 @@ import { FollowButton } from '@/components/follow-button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { videoDate, videoDuration } from '@/components/creator-video-ui';
 import { api } from '@/lib/api';
+import { PostsList } from '@/components/posts-list';
 import type { PublicUser, VideoPage } from '@/lib/types';
 
 export function AuthorSpace({ userId }: { userId: string }) {
@@ -76,6 +77,7 @@ function SpaceContent({ base, userId }: { base: string; userId: string }) {
             </dl>
           </div>
         </section>
+        <section className="mt-8"><h2 className="mb-5 border-b border-white/8 pb-4 font-semibold">图文投稿</h2><PostsList author={author.user_id} /></section>
         <section className="mt-8">
           <div className="mb-5 flex items-center gap-2 border-b border-white/8 pb-4"><Film className="size-5 text-[#ff6b5e]" /><h2 className="font-semibold">视频投稿</h2><span className="ml-auto text-xs text-white/40">最新投稿在前</span></div>
           {page.items.length === 0 ? <div className="creator-panel py-16 text-center"><Film className="mx-auto mb-3 size-8 text-white/20" /><p className="text-white/50">还没有公开的视频</p></div>

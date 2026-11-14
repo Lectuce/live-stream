@@ -66,6 +66,9 @@ func Initdb() {
 	if err := db.AutoMigrate(&model.VideoReview{}); err != nil {
 		panic(fmt.Errorf("Database video review migration failed: %w", err))
 	}
+	if err := db.AutoMigrate(&model.Post{}, &model.PostImage{}, &model.FeedEvent{}, &model.OutboxEvent{}, &model.FeedDeadLetter{}); err != nil {
+		panic(fmt.Errorf("Database community migration failed: %w", err))
+	}
 
 	if err := migrateDanmaSequences(db); err != nil {
 		panic(fmt.Errorf("Database danma sequence migration failed: %v", err))

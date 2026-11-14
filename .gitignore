@@ -5,6 +5,7 @@ live-stream
 .env
 /test-results/
 /storage/videos/
+/storage/post-images/
 /docs/
 
 /docs/autumn-recruitment-project-review.md

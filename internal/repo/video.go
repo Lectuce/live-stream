@@ -105,19 +105,31 @@ func PublishVideo(
 	videoID uint64,
 	ownerID uint64,
 ) (int64, error) {
-	now := time.Now()
-
-	result := dao.SC.Db.WithContext(ctx).
-		Model(&model.Video{}).
-		Where(
-			"video_id = ? AND owner_id = ? AND publish_status = ? "+
-				"AND process_status = ? AND audit_status = ?",
-			videoID, ownerID, "draft", "ready", "approved",
-		).
-		Updates(map[string]any{
-			"publish_status": "published",
-			"published_at":   now,
-		})
-
-	return result.RowsAffected, result.Error
+	var rows int64
+	err := dao.SC.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var video model.Video
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("video_id = ? AND owner_id = ?", videoID, ownerID).First(&video).Error; err != nil {
+			return err
+		}
+		if video.ProcessStatus != "ready" || video.AuditStatus != "approved" || video.PlayURL == "" {
+			return nil
+		}
+		if video.PublishStatus != "draft" && video.PublishStatus != "published" {
+			return nil
+		}
+		published := time.Now().UTC().Truncate(time.Microsecond)
+		if video.PublishStatus == "draft" {
+			if err := tx.Model(&video).Updates(map[string]any{"publish_status": "published", "published_at": published}).Error; err != nil {
+				return err
+			}
+		} else if video.PublishedAt != nil {
+			published = *video.PublishedAt
+		}
+		if err := QueueContentEvent(tx, "video.published", ownerID, videoID, published); err != nil {
+			return err
+		}
+		rows = 1
+		return nil
+	})
+	return rows, err
 }

@@ -29,16 +29,7 @@ func InitKafkaProducer() error {
 		return fmt.Errorf("kafka danmu topic cannot be empty")
 	}
 
-	probeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	conn, err := kafka.DialLeader(probeCtx, "tcp", brokers[0], topic, 0)
-	if err != nil {
-		return fmt.Errorf("connect to kafka topic leader: %w", err)
-	}
-	if err := conn.Close(); err != nil {
-		return fmt.Errorf("close kafka probe connection: %w", err)
-	}
-
+	// Connect lazily: broker downtime must not prevent HTTP publishing to the outbox.
 	writer = newWriter(brokers, topic)
 	fmt.Printf("kafka writer init success, broker=%s, topic=%s, batch_timeout=%s\n", brokers[0], topic, producerBatchTimeout)
 	return nil

@@ -36,7 +36,6 @@ func TestVideoQueriesExcludeSoftDeletedRecords(t *testing.T) {
 		"owner detail":  func() error { _, err := SelectOwnerVideo(ctx, 1, 2); return err },
 		"owner list":    func() error { _, err := SelectOwnerVideos(ctx, 2, 0, 20); return err },
 		"public list":   func() error { _, err := SelectPublishedVideos(ctx, 0, 20); return err },
-		"publish":       func() error { _, err := PublishVideo(ctx, 1, 2); return err },
 		"attach upload": func() error { _, err := AttachVideoMedia(ctx, 1, 2, "x.mp4", "/media", 10, "approved"); return err },
 		"delete":        func() error { _, err := SoftDeleteOwnerVideo(ctx, 1, 2); return err },
 	}

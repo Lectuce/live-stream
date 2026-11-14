@@ -7,6 +7,7 @@ import (
 	"live-stream/internal/dao"
 	"live-stream/internal/hotrank"
 	"live-stream/internal/kafka"
+	"live-stream/internal/outbox"
 	"live-stream/internal/rousters"
 	"live-stream/internal/ws"
 	"log"
@@ -38,6 +39,7 @@ func main() {
 	}
 
 	defer kafka.Close()
+	contentWorkersDone := outbox.Start(ctx, config.GlobalConfig.Kafka.Brokers)
 	hub := ws.NewHub()
 	go hub.Run()
 	if config.GlobalConfig.Danmaku.HotRanking.Enabled {
@@ -100,6 +102,11 @@ func main() {
 
 	// 等待gin服务退出
 	<-serverExit
+	select {
+	case <-contentWorkersDone:
+	case <-shutdownCtx.Done():
+		log.Println("content workers shutdown timed out; unfinished leases will be reclaimed")
+	}
 	log.Println("service exited")
 }
 

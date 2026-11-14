@@ -13,6 +13,10 @@ import type {
   ReviewPage,
   PublicUser,
   FollowState,
+  FollowingFeedPage,
+  Post,
+  PostPage,
+  PostImage,
 } from '@/lib/types';
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -39,6 +43,18 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
 }
 
 export const api = {
+  followingFeed: (base: string, cursor = '', signal?: AbortSignal) =>
+    request<ApiEnvelope<FollowingFeedPage>>(base, `/api/v1/feeds/following?${new URLSearchParams({ cursor, limit: '20' })}`, { signal, cache: 'no-store' }),
+  createPost: (base: string, signal?: AbortSignal) => request<ApiEnvelope<Post>>(base, '/api/v1/posts', { method: 'POST', signal }),
+  post: (base: string, id: string, mine = false, signal?: AbortSignal) => request<ApiEnvelope<Post>>(base, `/api/v1/posts/${mine ? 'mine/' : ''}${encodeURIComponent(id)}`, { signal, cache: 'no-store' }),
+  posts: (base: string, author: string, cursor = '', signal?: AbortSignal) => request<ApiEnvelope<PostPage>>(base, `${author ? `/api/v1/users/${encodeURIComponent(author)}/posts` : '/api/v1/posts/mine'}?${new URLSearchParams({ cursor, limit: '20' })}`, { signal, cache: 'no-store' }),
+  editPost: (base: string, id: string, version: string, content: string, imageIDs: string[], signal?: AbortSignal) => request<ApiEnvelope<Post>>(base, `/api/v1/posts/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ version, content, image_ids: imageIDs }), signal }),
+  publishPost: (base: string, id: string, version: string, signal?: AbortSignal) => request<ApiEnvelope<Post>>(base, `/api/v1/posts/${encodeURIComponent(id)}/publish`, { method: 'POST', body: JSON.stringify({ version }), signal }),
+  deletePost: (base: string, id: string) => request<{ message: string }>(base, `/api/v1/posts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  uploadPostImage: (base: string, file: File, signal?: AbortSignal) => {
+    const body = new FormData(); body.append('file', file);
+    return request<ApiEnvelope<PostImage>>(base, '/api/v1/posts/images', { method: 'POST', body, signal });
+  },
   publicUser: (base: string, id: string, signal?: AbortSignal) =>
     request<ApiEnvelope<PublicUser>>(base, `/api/v1/users/${encodeURIComponent(id)}`, { signal, cache: 'no-store' }),
   authorVideos: (base: string, id: string, cursor = '', signal?: AbortSignal) =>

@@ -1,5 +1,19 @@
 export interface ApiEnvelope<T> { data: T; message: string; }
 
+export interface PostImage { image_id: string; url: string; }
+export interface Post {
+  post_id: string; owner_id: string; content: string; status: 'draft' | 'published';
+  version: string; published_at: string | null; created_at: string; updated_at: string; images: PostImage[];
+}
+export interface PostPage { items: Post[]; next_cursor: string; has_more: boolean; }
+export interface FollowingFeedItem {
+  event_id: string; type: 'video.published' | 'post.published'; published_at: string;
+  author: { user_id: string; user_name: string; avatar_url: string };
+  video?: { video_id: string; title: string; cover_url: string; duration_ms: number };
+  post?: Post;
+}
+export interface FollowingFeedPage { items: FollowingFeedItem[]; next_cursor: string; has_more: boolean; }
+
 export interface PublicUser {
   user_id: string;
   user_name: string;

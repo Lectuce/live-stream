@@ -147,10 +147,7 @@ func PublishVideo(
 		video.PlayURL == "" {
 		return ErrVideoNotReady
 	}
-	if video.PublishStatus == "published" {
-		return nil
-	}
-	if video.PublishStatus != "draft" {
+	if video.PublishStatus != "draft" && video.PublishStatus != "published" {
 		return ErrVideoNotReady
 	}
 
