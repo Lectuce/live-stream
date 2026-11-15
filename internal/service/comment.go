@@ -18,11 +18,12 @@ var ErrCommentInput = errors.New("invalid comment input")
 var ErrCommentCursor = errors.New("invalid comment cursor")
 
 type commentCursor struct {
-	Version int       `json:"v"`
-	VideoID uint64    `json:"video_id,string"`
-	RootID  uint64    `json:"root_id,string"`
-	Time    time.Time `json:"t"`
-	ID      uint64    `json:"id,string"`
+	Version    int       `json:"v"`
+	TargetType string    `json:"target_type"`
+	TargetID   uint64    `json:"target_id,string"`
+	RootID     uint64    `json:"root_id,string"`
+	Time       time.Time `json:"t"`
+	ID         uint64    `json:"id,string"`
 }
 
 func normalizeComment(req model.CreateCommentRequest) (model.CreateCommentRequest, error) {
@@ -38,15 +39,15 @@ func normalizeComment(req model.CreateCommentRequest) (model.CreateCommentReques
 	return req, nil
 }
 
-func CreateVideoComment(ctx context.Context, videoID, userID uint64, req model.CreateCommentRequest) (*model.Comment, error) {
+func CreateComment(ctx context.Context, targetType string, targetID, userID uint64, req model.CreateCommentRequest) (*model.Comment, error) {
 	req, err := normalizeComment(req)
 	if err != nil {
 		return nil, err
 	}
-	return repo.CreateVideoComment(ctx, videoID, userID, req)
+	return repo.CreateComment(ctx, targetType, targetID, userID, req)
 }
 
-func decodeCommentCursor(value string, videoID, rootID uint64) (commentCursor, error) {
+func decodeCommentCursor(value string, targetType string, targetID, rootID uint64) (commentCursor, error) {
 	var cursor commentCursor
 	if value == "" {
 		return cursor, nil
@@ -58,21 +59,21 @@ func decodeCommentCursor(value string, videoID, rootID uint64) (commentCursor, e
 	if err != nil {
 		return cursor, ErrCommentCursor
 	}
-	if json.Unmarshal(data, &cursor) != nil || cursor.Version != 1 || cursor.VideoID != videoID || cursor.RootID != rootID || cursor.ID == 0 || cursor.Time.IsZero() || cursor.Time.Year() < 1970 || cursor.Time.Year() > 9999 || cursor.Time.Nanosecond()%1000 != 0 {
+	if json.Unmarshal(data, &cursor) != nil || cursor.Version != 2 || cursor.TargetType != targetType || cursor.TargetID != targetID || cursor.RootID != rootID || cursor.ID == 0 || cursor.Time.IsZero() || cursor.Time.Year() < 1970 || cursor.Time.Year() > 9999 || cursor.Time.Nanosecond()%1000 != 0 {
 		return cursor, ErrCommentCursor
 	}
 	return cursor, nil
 }
 
-func ListVideoComments(ctx context.Context, videoID, rootID uint64, value string, limit int) (*model.CommentPage, error) {
+func ListComments(ctx context.Context, targetType string, targetID, rootID uint64, value string, limit int) (*model.CommentPage, error) {
 	if limit < 1 || limit > 50 {
 		return nil, ErrCommentInput
 	}
-	cursor, err := decodeCommentCursor(value, videoID, rootID)
+	cursor, err := decodeCommentCursor(value, targetType, targetID, rootID)
 	if err != nil {
 		return nil, err
 	}
-	items, err := repo.ListVideoComments(ctx, videoID, rootID, cursor.Time, cursor.ID, limit+1)
+	items, err := repo.ListComments(ctx, targetType, targetID, rootID, cursor.Time, cursor.ID, limit+1)
 	if err != nil {
 		return nil, err
 	}
@@ -80,11 +81,18 @@ func ListVideoComments(ctx context.Context, videoID, rootID uint64, value string
 	if page.HasMore {
 		page.Items = items[:limit]
 		last := page.Items[limit-1]
-		data, err := json.Marshal(commentCursor{Version: 1, VideoID: videoID, RootID: rootID, Time: last.CreatedAt, ID: last.ID})
+		data, err := json.Marshal(commentCursor{Version: 2, TargetType: targetType, TargetID: targetID, RootID: rootID, Time: last.CreatedAt, ID: last.ID})
 		if err != nil {
 			return nil, err
 		}
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(data)
 	}
 	return page, nil
+}
+
+func CreateVideoComment(ctx context.Context, videoID, userID uint64, req model.CreateCommentRequest) (*model.Comment, error) {
+	return CreateComment(ctx, model.CommentTargetVideo, videoID, userID, req)
+}
+func ListVideoComments(ctx context.Context, videoID, rootID uint64, value string, limit int) (*model.CommentPage, error) {
+	return ListComments(ctx, model.CommentTargetVideo, videoID, rootID, value, limit)
 }

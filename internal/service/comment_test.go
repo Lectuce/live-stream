@@ -40,17 +40,32 @@ func TestCommentCursorScope(t *testing.T) {
 		data, _ := json.Marshal(c)
 		return base64.RawURLEncoding.EncodeToString(data)
 	}
-	valid := commentCursor{Version: 1, VideoID: 7, RootID: 11, ID: 22, Time: stamp}
-	if _, err := decodeCommentCursor(encode(valid), 7, 11); err != nil {
+	valid := commentCursor{Version: 2, TargetType: "video", TargetID: 7, RootID: 11, ID: 22, Time: stamp}
+	if _, err := decodeCommentCursor(encode(valid), "video", 7, 11); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := decodeCommentCursor(encode(valid), "post", 7, 11); err == nil {
+		t.Fatal("video cursor accepted by a post with the same numeric ID")
+	}
+	post := valid
+	post.TargetType = "post"
+	if _, err := decodeCommentCursor(encode(post), "post", 7, 11); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeCommentCursor(encode(post), "video", 7, 11); err == nil {
+		t.Fatal("post cursor accepted by a video with the same numeric ID")
+	}
+	legacy := base64.RawURLEncoding.EncodeToString([]byte(`{"v":1,"video_id":"7","root_id":"11","id":"22","t":"2026-11-14T01:02:03Z"}`))
+	if _, err := decodeCommentCursor(legacy, "video", 7, 11); err == nil {
+		t.Fatal("legacy cursor must ask the client to refresh")
+	}
 	for _, scope := range [][2]uint64{{8, 11}, {7, 12}, {7, 0}} {
-		if _, err := decodeCommentCursor(encode(valid), scope[0], scope[1]); err == nil {
+		if _, err := decodeCommentCursor(encode(valid), "video", scope[0], scope[1]); err == nil {
 			t.Fatal("cross-scope cursor accepted")
 		}
 	}
-	for _, value := range []string{"invalid", strings.Repeat("x", 1025), encode(commentCursor{Version: 1, VideoID: 7, RootID: 11, ID: 0, Time: stamp})} {
-		if _, err := decodeCommentCursor(value, 7, 11); err == nil {
+	for _, value := range []string{"invalid", strings.Repeat("x", 1025), encode(commentCursor{Version: 2, TargetType: "video", TargetID: 7, RootID: 11, ID: 0, Time: stamp})} {
+		if _, err := decodeCommentCursor(value, "video", 7, 11); err == nil {
 			t.Fatal("invalid cursor accepted")
 		}
 	}
@@ -71,7 +86,7 @@ func TestCommentPaginationCursorUsesLastReturnedRow(t *testing.T) {
 	defer func() { dao.SC = previous }()
 	stamp := time.Now().UTC().Truncate(time.Microsecond)
 	mock.ExpectQuery("SELECT `video_id` FROM `videos`").WillReturnRows(sqlmock.NewRows([]string{"video_id"}).AddRow(7))
-	mock.ExpectQuery("SELECT .*FROM comments AS c.*LIMIT \\?").WithArgs(uint64(7), uint64(0), 3).WillReturnRows(sqlmock.NewRows([]string{"id", "video_id", "created_at"}).AddRow(30, 7, stamp).AddRow(20, 7, stamp).AddRow(10, 7, stamp))
+	mock.ExpectQuery("SELECT .*FROM comments AS c.*LIMIT \\?").WithArgs("video", uint64(7), uint64(0), 3).WillReturnRows(sqlmock.NewRows([]string{"id", "video_id", "created_at"}).AddRow(30, 7, stamp).AddRow(20, 7, stamp).AddRow(10, 7, stamp))
 	page, err := ListVideoComments(context.Background(), 7, 0, "", 2)
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +94,7 @@ func TestCommentPaginationCursorUsesLastReturnedRow(t *testing.T) {
 	if len(page.Items) != 2 || !page.HasMore {
 		t.Fatal(page)
 	}
-	cursor, err := decodeCommentCursor(page.NextCursor, 7, 0)
+	cursor, err := decodeCommentCursor(page.NextCursor, "video", 7, 0)
 	if err != nil || cursor.ID != 20 || !cursor.Time.Equal(stamp) {
 		t.Fatal(cursor, err)
 	}

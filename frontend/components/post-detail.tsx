@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { AppHeader } from '@/components/app-header';
 import { AuthorCard } from '@/components/author-card';
 import { useAuth } from '@/components/auth-provider';
+import { ContentComments } from '@/components/content-comments';
 import { PostBody } from '@/components/post-card';
 import { videoDate } from '@/components/creator-video-ui';
 import { api } from '@/lib/api';
@@ -30,6 +31,7 @@ function DetailContent({ base, id }: { base: string; id: string }) {
     {error ? <div className="creator-panel mt-6 p-8"><p role="alert" className="text-red-300">{error}</p><button className="creator-secondary mt-4" onClick={() => setRetry((v) => v + 1)}>重新加载</button></div> : !post ? <p className="mt-8 text-white/50">正在加载图文…</p> : <>
       <AuthorCard userId={post.owner_id} />
       <article className="creator-panel mt-6 p-5 sm:p-8"><div className="mb-6 flex items-center justify-between text-xs text-white/40"><span>{videoDate(post.published_at || post.created_at)} 发布</span>{String(user?.user_id) === post.owner_id && <Link href={`/posts/new?post_id=${id}`} className="text-[#ff786c]">编辑 / 删除</Link>}</div><PostBody post={post} /></article>
+      <ContentComments targetType="post" targetID={post.post_id} />
     </>}
   </main>;
 }

@@ -19,13 +19,13 @@ import (
 func commentError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
-		c.JSON(404, gin.H{"message": "视频或评论不存在、不可见，或无权操作"})
+		c.JSON(404, gin.H{"message": "内容或评论不存在、不可见，或无权操作"})
 	case errors.Is(err, service.ErrCommentInput):
 		c.JSON(400, gin.H{"message": "评论须为1–2000字，并提供有效的request_id"})
 	case errors.Is(err, service.ErrCommentCursor):
 		c.JSON(400, gin.H{"message": "评论游标无效，请刷新"})
 	case errors.Is(err, repo.ErrCommentTarget):
-		c.JSON(400, gin.H{"message": "回复目标不属于当前视频或不存在"})
+		c.JSON(400, gin.H{"message": "回复目标不属于当前内容或不存在"})
 	case errors.Is(err, repo.ErrCommentClosed):
 		c.JSON(409, gin.H{"message": "评论已删除，该讨论不再接受此回复"})
 	case errors.Is(err, repo.ErrCommentRequest):
@@ -59,11 +59,11 @@ func parseCommentID(c *gin.Context) (uint64, bool) {
 	return id, true
 }
 
-func ListVideoComments(c *gin.Context)       { listCommentPage(c, false) }
-func ListVideoCommentReplies(c *gin.Context) { listCommentPage(c, true) }
-func listCommentPage(c *gin.Context, replies bool) {
+func ListVideoComments(c *gin.Context)       { listCommentPage(c, model.CommentTargetVideo, false) }
+func ListVideoCommentReplies(c *gin.Context) { listCommentPage(c, model.CommentTargetVideo, true) }
+func listCommentPage(c *gin.Context, targetType string, replies bool) {
 	c.Header("Cache-Control", "private, no-store")
-	videoID, ok := parseVideoID(c)
+	targetID, ok := parseCommentTargetID(c, targetType)
 	if !ok {
 		return
 	}
@@ -79,7 +79,7 @@ func listCommentPage(c *gin.Context, replies bool) {
 		c.JSON(400, gin.H{"message": "limit必须在1到50之间"})
 		return
 	}
-	page, err := service.ListVideoComments(c.Request.Context(), videoID, root, c.Query("cursor"), limit)
+	page, err := service.ListComments(c.Request.Context(), targetType, targetID, root, c.Query("cursor"), limit)
 	if err != nil {
 		commentError(c, err)
 		return
@@ -87,12 +87,12 @@ func listCommentPage(c *gin.Context, replies bool) {
 	c.JSON(200, gin.H{"data": page, "message": "success"})
 }
 
-func CreateVideoComment(c *gin.Context) {
+func createComment(c *gin.Context, targetType string) {
 	uid, ok := commentActor(c)
 	if !ok {
 		return
 	}
-	videoID, ok := parseVideoID(c)
+	targetID, ok := parseCommentTargetID(c, targetType)
 	if !ok {
 		return
 	}
@@ -107,7 +107,7 @@ func CreateVideoComment(c *gin.Context) {
 		c.JSON(400, gin.H{"message": "请求只能包含一个JSON对象"})
 		return
 	}
-	comment, err := service.CreateVideoComment(c.Request.Context(), videoID, uid, req)
+	comment, err := service.CreateComment(c.Request.Context(), targetType, targetID, uid, req)
 	if err != nil {
 		commentError(c, err)
 		return
@@ -115,12 +115,12 @@ func CreateVideoComment(c *gin.Context) {
 	c.JSON(200, gin.H{"data": comment, "message": "评论已发送"})
 }
 
-func DeleteVideoComment(c *gin.Context) {
+func deleteComment(c *gin.Context, targetType string) {
 	uid, ok := commentActor(c)
 	if !ok {
 		return
 	}
-	videoID, ok := parseVideoID(c)
+	targetID, ok := parseCommentTargetID(c, targetType)
 	if !ok {
 		return
 	}
@@ -128,9 +128,28 @@ func DeleteVideoComment(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := repo.DeleteVideoComment(c.Request.Context(), videoID, id, uid); err != nil {
+	if err := repo.DeleteComment(c.Request.Context(), targetType, targetID, id, uid); err != nil {
 		commentError(c, err)
 		return
 	}
 	c.JSON(200, gin.H{"message": "评论已删除"})
 }
+
+func parseCommentTargetID(c *gin.Context, targetType string) (uint64, bool) {
+	param := "video_id"
+	if targetType == model.CommentTargetPost {
+		param = "post_id"
+	}
+	id, err := strconv.ParseUint(c.Param(param), 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(400, gin.H{"message": "内容ID无效"})
+		return 0, false
+	}
+	return id, true
+}
+func CreateVideoComment(c *gin.Context)     { createComment(c, model.CommentTargetVideo) }
+func DeleteVideoComment(c *gin.Context)     { deleteComment(c, model.CommentTargetVideo) }
+func ListPostComments(c *gin.Context)       { listCommentPage(c, model.CommentTargetPost, false) }
+func ListPostCommentReplies(c *gin.Context) { listCommentPage(c, model.CommentTargetPost, true) }
+func CreatePostComment(c *gin.Context)      { createComment(c, model.CommentTargetPost) }
+func DeletePostComment(c *gin.Context)      { deleteComment(c, model.CommentTargetPost) }

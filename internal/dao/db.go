@@ -73,6 +73,10 @@ func Initdb() {
 		panic(fmt.Errorf("Database comment migration failed: %w", err))
 	}
 
+	if err := migrateCommentTargets(db); err != nil {
+		panic(fmt.Errorf("Database comment target migration failed: %w", err))
+	}
+
 	if err := migrateDanmaSequences(db); err != nil {
 		panic(fmt.Errorf("Database danma sequence migration failed: %v", err))
 	}

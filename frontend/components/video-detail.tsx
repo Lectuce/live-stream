@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AppHeader } from '@/components/app-header';
 import { AuthorCard } from '@/components/author-card';
-import { VideoComments } from '@/components/video-comments';
+import { ContentComments } from '@/components/content-comments';
 import { useAuth } from '@/components/auth-provider';
 import { api } from '@/lib/api';
 import type { Video } from '@/lib/types';
@@ -84,7 +84,7 @@ export function VideoDetail({ videoId }: { videoId: string }) {
             <p className="mt-6 whitespace-pre-wrap text-white/70">
               {video.description}
             </p>
-            <VideoComments videoID={video.video_id} />
+            <ContentComments targetType="video" targetID={video.video_id} />
           </>
         )}
       </main>

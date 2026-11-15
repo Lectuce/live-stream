@@ -7,7 +7,7 @@ import { useAuth } from '@/components/auth-provider';
 import { AuthDialog } from '@/components/auth-dialog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { api } from '@/lib/api';
-import type { CommentPage, VideoComment } from '@/lib/types';
+import type { CommentPage, ContentComment, CommentTargetType } from '@/lib/types';
 
 // getRandomValues also works on the project's HTTP development origin.
 function requestID() {
@@ -17,25 +17,25 @@ function requestID() {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-export function VideoComments({ videoID }: { videoID: string }) {
+export function ContentComments({ targetType, targetID }: { targetType: CommentTargetType; targetID: string }) {
   const { apiBase, user, loading } = useAuth();
-  return <section className="mt-10 border-t border-white/10 pt-7" aria-label="视频评论">
+  return <section className="mt-10 border-t border-white/10 pt-7" aria-label={targetType === 'video' ? '视频评论' : '图文评论'}>
     <div className="mb-6 flex items-center gap-2"><MessageSquare className="size-5 text-[#ff786c]" /><h2 className="text-xl font-semibold">评论</h2><span className="ml-2 text-xs text-white/40">最新在前</span></div>
-    <CommentsContent key={`${apiBase}:${videoID}:${user?.user_id ?? 'guest'}:${loading}`} videoID={videoID} />
+    <CommentsContent key={`${apiBase}:${targetType}:${targetID}:${user?.user_id ?? 'guest'}:${loading}`} targetType={targetType} targetID={targetID} />
   </section>;
 }
 
-function CommentsContent({ videoID }: { videoID: string }) {
+function CommentsContent({ targetType, targetID }: { targetType: CommentTargetType; targetID: string }) {
   const [revision, setRevision] = useState(0);
   return <>
-    <CommentComposer videoID={videoID} onSent={() => setRevision((value) => value + 1)} />
+    <CommentComposer targetType={targetType} targetID={targetID} onSent={() => setRevision((value) => value + 1)} />
     <div className="my-5 flex justify-end"><button type="button" className="flex items-center gap-1.5 text-xs text-white/45 hover:text-white" onClick={() => setRevision((value) => value + 1)}><RefreshCw className="size-3" />刷新评论</button></div>
-    <CommentList key={revision} videoID={videoID} />
+    <CommentList key={revision} targetType={targetType} targetID={targetID} />
   </>;
 }
 
-function CommentComposer({ videoID, parentID = '0', label = '说说你的看法…', onSent, onCancel }: {
-  videoID: string; parentID?: string; label?: string; onSent: () => void; onCancel?: () => void;
+function CommentComposer({ targetType, targetID, parentID = '0', label = '说说你的看法…', onSent, onCancel }: {
+  targetType: CommentTargetType; targetID: string; parentID?: string; label?: string; onSent: () => void; onCancel?: () => void;
 }) {
   const { apiBase, user, loading } = useAuth();
   const [open, setOpen] = useState(false);
@@ -54,7 +54,7 @@ function CommentComposer({ videoID, parentID = '0', label = '说说你的看法�
     const abort = new AbortController(); controller.current = abort;
     try {
       if (!command.current || command.current.text !== text || command.current.parent !== parentID) command.current = { id: requestID(), text, parent: parentID };
-      await api.createComment(apiBase, videoID, text, parentID, command.current.id, abort.signal);
+      await api.createComment(apiBase, targetType, targetID, text, parentID, command.current.id, abort.signal);
       if (!abort.signal.aborted) { setContent(''); command.current = null; onSent(); }
     } catch (err) { if (!abort.signal.aborted) setError(err instanceof Error ? err.message : '发送失败，请重试'); }
     finally { pending.current = false; if (!abort.signal.aborted) setBusy(false); }
@@ -69,11 +69,11 @@ function CommentComposer({ videoID, parentID = '0', label = '说说你的看法�
   </form>;
 }
 
-function CommentList({ videoID, rootID = '', closed = false, onReply }: {
-  videoID: string; rootID?: string; closed?: boolean; onReply?: (comment: VideoComment) => void;
+function CommentList({ targetType, targetID, rootID = '', closed = false, onReply }: {
+  targetType: CommentTargetType; targetID: string; rootID?: string; closed?: boolean; onReply?: (comment: ContentComment) => void;
 }) {
   const { apiBase } = useAuth();
-  const [items, setItems] = useState<VideoComment[]>([]);
+  const [items, setItems] = useState<ContentComment[]>([]);
   const [page, setPage] = useState<CommentPage | null>(null);
   const [cursor, setCursor] = useState('');
   const [retry, setRetry] = useState(0);
@@ -81,14 +81,14 @@ function CommentList({ videoID, rootID = '', closed = false, onReply }: {
   const [error, setError] = useState('');
   useEffect(() => {
     const controller = new AbortController();
-    void api.comments(apiBase, videoID, rootID, cursor, controller.signal).then(({ data }) => {
+    void api.comments(apiBase, targetType, targetID, rootID, cursor, controller.signal).then(({ data }) => {
       if (controller.signal.aborted) return;
       setError(''); setPage(data);
       setItems((previous) => { const seen = new Set(previous.map((item) => item.comment_id)); return cursor ? [...previous, ...data.items.filter((item) => !seen.has(item.comment_id))] : data.items; });
     }).catch((err: unknown) => { if (!controller.signal.aborted) setError(err instanceof Error ? err.message : '评论加载失败'); })
       .finally(() => { if (!controller.signal.aborted) setBusy(false); });
     return () => controller.abort();
-  }, [apiBase, videoID, rootID, cursor, retry]);
+  }, [apiBase, targetType, targetID, rootID, cursor, retry]);
   function deleted(id: string) { setItems((old) => old.map((item) => item.comment_id === id ? { ...item, content: '', deleted_at: new Date().toISOString() } : item)); }
   return <div className="space-y-5">
     {items.map((item) => rootID ? <CommentRow key={item.comment_id} comment={item} closed={closed} onDeleted={() => deleted(item.comment_id)} onReply={() => onReply?.(item)} /> : <CommentThread key={item.comment_id} comment={item} onDeleted={() => deleted(item.comment_id)} />)}
@@ -99,21 +99,21 @@ function CommentList({ videoID, rootID = '', closed = false, onReply }: {
   </div>;
 }
 
-function CommentThread({ comment, onDeleted }: { comment: VideoComment; onDeleted: () => void }) {
+function CommentThread({ comment, onDeleted }: { comment: ContentComment; onDeleted: () => void }) {
   const [expanded, setExpanded] = useState(false);
-  const [target, setTarget] = useState<VideoComment | null>(null);
+  const [target, setTarget] = useState<ContentComment | null>(null);
   const [revision, setRevision] = useState(0);
   const [added, setAdded] = useState(0);
   const closed = !!comment.deleted_at;
   return <article className="border-b border-white/8 pb-6">
     <CommentRow comment={comment} closed={closed} onDeleted={onDeleted} onReply={() => setTarget(comment)} />
     {(comment.reply_count > 0 || added > 0 || expanded) && <button type="button" className="mt-3 ml-11 text-xs text-white/50 hover:text-[#ff786c]" onClick={() => setExpanded((value) => !value)}>{expanded ? '收起回复' : `查看 ${comment.reply_count + added} 条回复`}</button>}
-    {expanded && <div className="mt-4 ml-4 border-l border-white/10 pl-4 sm:ml-11"><CommentList key={revision} videoID={comment.video_id} rootID={comment.comment_id} closed={closed} onReply={setTarget} /></div>}
-    {target && !closed && <div className="mt-4 ml-4 sm:ml-11"><CommentComposer key={target.comment_id} videoID={comment.video_id} parentID={target.comment_id} label={`回复 ${target.user_name}`} onCancel={() => setTarget(null)} onSent={() => { setTarget(null); setExpanded(true); setAdded((value) => value + 1); setRevision((value) => value + 1); }} /></div>}
+    {expanded && <div className="mt-4 ml-4 border-l border-white/10 pl-4 sm:ml-11"><CommentList key={revision} targetType={comment.target_type} targetID={comment.target_id} rootID={comment.comment_id} closed={closed} onReply={setTarget} /></div>}
+    {target && !closed && <div className="mt-4 ml-4 sm:ml-11"><CommentComposer key={target.comment_id} targetType={comment.target_type} targetID={comment.target_id} parentID={target.comment_id} label={`回复 ${target.user_name}`} onCancel={() => setTarget(null)} onSent={() => { setTarget(null); setExpanded(true); setAdded((value) => value + 1); setRevision((value) => value + 1); }} /></div>}
   </article>;
 }
 
-function CommentRow({ comment, closed, onDeleted, onReply }: { comment: VideoComment; closed: boolean; onDeleted: () => void; onReply: () => void }) {
+function CommentRow({ comment, closed, onDeleted, onReply }: { comment: ContentComment; closed: boolean; onDeleted: () => void; onReply: () => void }) {
   const { apiBase, user } = useAuth();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -124,7 +124,7 @@ function CommentRow({ comment, closed, onDeleted, onReply }: { comment: VideoCom
     if (pending.current || !window.confirm('确定删除这条评论？正文会被清除，已有回复将保留。')) return;
     pending.current = true; setBusy(true); setError('');
     const abort = new AbortController(); controller.current = abort;
-    try { await api.deleteComment(apiBase, comment.video_id, comment.comment_id, abort.signal); if (!abort.signal.aborted) onDeleted(); }
+    try { await api.deleteComment(apiBase, comment.target_type, comment.target_id, comment.comment_id, abort.signal); if (!abort.signal.aborted) onDeleted(); }
     catch (err) { if (!abort.signal.aborted) setError(err instanceof Error ? err.message : '删除失败'); }
     finally { pending.current = false; if (!abort.signal.aborted) setBusy(false); }
   }

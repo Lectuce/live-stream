@@ -1,11 +1,13 @@
 export interface ApiEnvelope<T> { data: T; message: string; }
 
-export interface VideoComment {
-  comment_id: string; video_id: string; user_id: string; root_id: string; parent_id: string;
+export type CommentTargetType = 'video' | 'post';
+
+export interface ContentComment {
+  comment_id: string; target_type: CommentTargetType; target_id: string; video_id?: string; user_id: string; root_id: string; parent_id: string;
   reply_to_user_id: string; content: string; created_at: string; deleted_at: string | null;
   user_name: string; avatar_url: string; reply_to_user_name: string; reply_count: number;
 }
-export interface CommentPage { items: VideoComment[]; next_cursor: string; has_more: boolean; }
+export interface CommentPage { items: ContentComment[]; next_cursor: string; has_more: boolean; }
 
 export interface PostImage { image_id: string; url: string; }
 export interface Post {

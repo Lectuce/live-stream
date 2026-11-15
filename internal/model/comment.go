@@ -2,17 +2,25 @@ package model
 
 import "time"
 
+const (
+	CommentTargetVideo = "video"
+	CommentTargetPost  = "post"
+)
+
 // Deleted comments remain as tombstones to preserve the reply tree.
 type Comment struct {
-	ID            uint64     `json:"comment_id,string" gorm:"primaryKey;autoIncrement;index:idx_comment_page,priority:4"`
-	VideoID       uint64     `json:"video_id,string" gorm:"not null;index:idx_comment_page,priority:1"`
+	ID uint64 `json:"comment_id,string" gorm:"primaryKey;autoIncrement;index:idx_comment_target_page,priority:5"`
+	// VideoID is retained for migration and compatibility with existing video clients.
+	VideoID       uint64     `json:"video_id,string,omitempty" gorm:"not null;default:0"`
+	TargetType    string     `json:"target_type" gorm:"size:16;not null;default:video;index:idx_comment_target_page,priority:1"`
+	TargetID      uint64     `json:"target_id,string" gorm:"not null;default:0;index:idx_comment_target_page,priority:2"`
 	UserID        uint64     `json:"user_id,string" gorm:"not null;uniqueIndex:idx_comment_request,priority:1"`
-	RootID        uint64     `json:"root_id,string" gorm:"not null;default:0;index:idx_comment_page,priority:2"`
+	RootID        uint64     `json:"root_id,string" gorm:"not null;default:0;index:idx_comment_target_page,priority:3"`
 	ParentID      uint64     `json:"parent_id,string" gorm:"not null;default:0"`
 	ReplyToUserID uint64     `json:"reply_to_user_id,string" gorm:"not null;default:0"`
 	RequestID     string     `json:"-" gorm:"size:36;not null;uniqueIndex:idx_comment_request,priority:2"`
 	Content       string     `json:"content" gorm:"type:text;not null"`
-	CreatedAt     time.Time  `json:"created_at" gorm:"type:datetime(6);not null;index:idx_comment_page,priority:3"`
+	CreatedAt     time.Time  `json:"created_at" gorm:"type:datetime(6);not null;index:idx_comment_target_page,priority:4"`
 	DeletedAt     *time.Time `json:"deleted_at" gorm:"type:datetime(6)"`
 }
 
