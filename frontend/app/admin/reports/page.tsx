@@ -1,2 +1,2 @@
-import { CommentAdmin } from '@/components/comment-admin';
-export default function Page() { return <CommentAdmin reports />; }
+import { ReportAdmin } from '@/components/report-admin';
+export default function Page() { return <ReportAdmin />; }

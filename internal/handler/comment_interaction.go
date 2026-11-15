@@ -114,7 +114,11 @@ func ReportComment(c *gin.Context) {
 
 func commentAdminPage(c *gin.Context) (uint64, int, bool) {
 	c.Header("Cache-Control", "private, no-store")
-	before, err := strconv.ParseUint(c.DefaultQuery("cursor", "0"), 10, 64)
+	cursor := c.Query("cursor")
+	if cursor == "" {
+		cursor = "0"
+	}
+	before, err := strconv.ParseUint(cursor, 10, 64)
 	limit, e := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	if err != nil || e != nil || limit < 1 || limit > 50 {
 		c.JSON(400, gin.H{"message": "分页参数无效"})

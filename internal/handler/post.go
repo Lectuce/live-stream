@@ -22,6 +22,8 @@ func postError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		c.JSON(404, gin.H{"message": "图文不存在或不可见"})
+	case errors.Is(err, repo.ErrCommentClosed):
+		c.JSON(409, gin.H{"message": "图文已被管理员隐藏，无法自行发布"})
 	case errors.Is(err, repo.ErrPostConflict):
 		c.JSON(409, gin.H{"message": "图文已在其他页面修改，请重新加载"})
 	case errors.Is(err, repo.ErrPostImages):

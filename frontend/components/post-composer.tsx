@@ -76,7 +76,7 @@ function Composer({ base, initialID }: { base: string; initialID: string }) {
 
   if (loading) return <p className="py-12 text-white/50">正在加载图文…</p>;
   return <div className="creator-panel p-5 sm:p-7">
-    <div className="mb-5 flex items-center justify-between"><span className="rounded-md bg-white/5 px-2.5 py-1 text-xs text-white/50">{post?.status === 'published' ? '编辑已发布图文' : '图文草稿'}</span><span className="text-xs text-white/35">文字 / 图片</span></div>
+    <div className="mb-5 flex items-center justify-between"><span className="rounded-md bg-white/5 px-2.5 py-1 text-xs text-white/50">{post?.status === 'hidden' ? '已被管理员隐藏' : post?.status === 'published' ? '编辑已发布图文' : '图文草稿'}</span><span className="text-xs text-white/35">文字 / 图片</span></div>
     <label htmlFor="post-content" className="mb-3 block text-sm font-medium">想分享什么？</label>
     <textarea id="post-content" value={content} disabled={busy || loadFailed} onChange={(event) => setContent(event.target.value)} maxLength={5000} rows={9} placeholder="写下你的想法、近况，或一段创作背后的故事…" className="creator-input w-full resize-y leading-7" />
     <p className="mt-2 text-right text-xs tabular-nums text-white/30">{content.length} / 5000</p>
@@ -87,7 +87,7 @@ function Composer({ base, initialID }: { base: string; initialID: string }) {
     <div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-5">
       <div>{post && <button type="button" disabled={busy || loadFailed} className="inline-flex items-center gap-1.5 text-xs text-white/40 hover:text-red-300" onClick={() => { if (window.confirm('确定删除这条图文？删除后将无法通过公开链接访问。')) void action(async () => { await api.deletePost(base, post.post_id); if (!lifetime.current?.signal.aborted) window.location.assign('/posts'); }); }}><Trash2 className="size-3.5" />删除图文</button>}</div>
       <div className="flex gap-3"><button type="button" disabled={busy || loadFailed} className="creator-secondary" onClick={() => void action(async () => { await save(); setNotice(post?.status === 'published' ? '修改已保存' : '草稿已保存'); })}>{busy && <LoaderCircle className="size-4 animate-spin" />}{post?.status === 'published' ? '保存修改' : '保存草稿'}</button>
-        {post?.status !== 'published' ? <button type="button" disabled={busy || loadFailed || (!content.trim() && !images.length)} className="creator-primary" onClick={() => void action(async () => { const saved = await save(); const { data } = await api.publishPost(base, saved.post_id, saved.version, lifetime.current?.signal); if (!lifetime.current?.signal.aborted) window.location.assign(`/posts/${data.post_id}`); })}><Send className="size-4" />发布图文</button> : <Link href={`/posts/${post.post_id}`} className="creator-primary">查看图文</Link>}
+        {post?.status !== 'published' ? <button type="button" disabled={busy || loadFailed || post?.status === 'hidden' || (!content.trim() && !images.length)} className="creator-primary" onClick={() => void action(async () => { const saved = await save(); const { data } = await api.publishPost(base, saved.post_id, saved.version, lifetime.current?.signal); if (!lifetime.current?.signal.aborted) window.location.assign(`/posts/${data.post_id}`); })}><Send className="size-4" />发布图文</button> : <Link href={`/posts/${post.post_id}`} className="creator-primary">查看图文</Link>}
       </div>
     </div>
   </div>;

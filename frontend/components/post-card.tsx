@@ -14,7 +14,7 @@ export function PostBody({ post, compact = false }: { post: Post; compact?: bool
 
 export function PostCard({ post, mine = false }: { post: Post; mine?: boolean }) {
   return <article className="creator-panel p-5 sm:p-6">
-    <div className="mb-4 flex items-center justify-between gap-3 text-xs text-white/40"><span>{videoDate(post.published_at || post.created_at)} · {post.status === 'published' ? '已发布' : '草稿'}</span><Link className="text-[#ff786c] hover:text-white" href={mine ? `/posts/new?post_id=${post.post_id}` : `/posts/${post.post_id}`}>{mine ? '编辑图文' : '查看全文'}</Link></div>
+    <div className="mb-4 flex items-center justify-between gap-3 text-xs text-white/40"><span>{videoDate(post.published_at || post.created_at)} · {post.status === 'hidden' ? '已被管理员隐藏' : post.status === 'published' ? '已发布' : '草稿'}</span><Link className="text-[#ff786c] hover:text-white" href={mine ? `/posts/new?post_id=${post.post_id}` : `/posts/${post.post_id}`}>{mine ? '编辑图文' : '查看全文'}</Link></div>
     <PostBody post={post} compact />
   </article>;
 }

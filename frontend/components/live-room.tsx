@@ -13,6 +13,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/components/auth-provider';
 import { useLiveRoom } from '@/hooks/use-live-room';
+import { ReportButton } from '@/components/report-button';
 import { api } from '@/lib/api';
 import type { DanmakuMessage, Room } from '@/lib/types';
 
@@ -131,5 +132,5 @@ export function LiveRoom({ roomId }: { roomId: number }) {
 }
 
 function ChatMessage({ message }: { message: DanmakuMessage }) {
-  return <div className="group flex gap-2 rounded-lg px-2 py-2 hover:bg-white/[.035]"><Avatar size="sm"><AvatarFallback className="bg-white/6 text-[10px] text-white/45">{(message.user_name || '?').slice(0, 1).toUpperCase()}</AvatarFallback></Avatar><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate text-xs font-medium text-[#ff8a80]">{message.user_name || `用户 ${message.user_id}`}</span></div><p className="mt-0.5 break-words text-[13px] leading-5 text-white/72">{message.content}</p></div></div>;
+  return <div className="group flex gap-2 rounded-lg px-2 py-2 hover:bg-white/[.035]"><Avatar size="sm"><AvatarFallback className="bg-white/6 text-[10px] text-white/45">{(message.user_name || '?').slice(0, 1).toUpperCase()}</AvatarFallback></Avatar><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate text-xs font-medium text-[#ff8a80]">{message.user_name || `用户 ${message.user_id}`}</span></div><p className="mt-0.5 break-words text-[13px] leading-5 text-white/72">{message.content}</p><ReportButton kind="danmaku" id={message.message_id}/></div></div>;
 }

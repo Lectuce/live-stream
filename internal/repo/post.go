@@ -136,6 +136,9 @@ func PublishPost(ctx context.Context, id, owner, version uint64) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("post_id = ? AND owner_id = ?", id, owner).First(&post).Error; err != nil {
 			return err
 		}
+		if post.Status == "hidden" {
+			return ErrCommentClosed
+		}
 		if post.Version != version {
 			return ErrPostConflict
 		}

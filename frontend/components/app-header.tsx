@@ -6,6 +6,7 @@ import { Compass, LogOut, Radio, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/components/auth-provider';
+import { NotificationLink } from '@/components/notifications';
 import { AuthDialog } from '@/components/auth-dialog';
 
 export function AppHeader() {
@@ -20,12 +21,13 @@ export function AppHeader() {
             <span className="grid size-9 place-items-center rounded-xl bg-[#ff4d3d] shadow-[0_0_25px_rgb(255_77_61/28%)]"><Radio className="size-5" /></span>
             <span className="hidden sm:block"><span className="block text-sm font-black tracking-[.16em]">LIVE NOW</span><span className="text-[10px] tracking-[.18em] text-white/35">REALTIME STAGE</span></span>
           </Link>
-          <nav className="flex items-center gap-2">
+          <nav className="flex items-center gap-1 sm:gap-2">
+            <Link href="/me/favorites" className="px-2 text-xs text-white/65">收藏</Link><NotificationLink/>
             <Link href="/studio" className="hidden h-9 items-center rounded-md px-2 text-xs font-semibold text-white/65 hover:text-white sm:inline-flex">创作中心</Link>
             <Link href="/dynamic" className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-white/65 hover:text-white">动态</Link>
-            <Link href="/upload" className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-white/65 hover:text-white">投稿</Link>
+            <Link href="/upload" className="hidden sm:inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-white/65 hover:text-white">投稿</Link>
             <Link href="/video" className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-white/65 transition hover:bg-white/5 hover:text-white sm:px-3">视频</Link>
-            <Link href="/feed" className="inline-flex h-9 items-center gap-1.5 rounded-md px-2 text-xs font-semibold text-white/65 transition hover:bg-white/5 hover:text-white sm:px-3"><Compass className="size-4" /><span className="hidden sm:inline">发现房间</span></Link>
+            <Link href="/feed" className="hidden sm:inline-flex h-9 items-center gap-1.5 rounded-md px-2 text-xs font-semibold text-white/65 transition hover:bg-white/5 hover:text-white sm:px-3"><Compass className="size-4" /><span className="hidden sm:inline">发现房间</span></Link>
             {!loading && user ? <div className="flex items-center gap-2"><Link href={`/space/${user.user_id}`} aria-label="我的主页" className="flex items-center gap-2 rounded-full border border-white/8 bg-white/4 p-1 hover:bg-white/10 sm:pr-3"><Avatar size="sm"><AvatarImage src={user.avatar_url || undefined} /><AvatarFallback>{user.user_name.slice(0, 1).toUpperCase()}</AvatarFallback></Avatar><span className="hidden text-xs text-white/70 sm:inline">{user.user_name}</span></Link><Button variant="ghost" size="icon" onClick={() => void logout()} aria-label="退出登录"><LogOut /></Button></div> : <Button size="sm" onClick={() => setAuthOpen(true)} className="bg-white text-black hover:bg-white/85"><UserRound /> 登录</Button>}
           </nav>
         </div>

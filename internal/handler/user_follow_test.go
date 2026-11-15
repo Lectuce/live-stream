@@ -79,9 +79,17 @@ func TestFollowRetriesAndSpoofedActor(t *testing.T) {
 		mock.ExpectQuery("SELECT user_id, user_name, avatar_url, bio FROM `users` WHERE user_id = \\? LIMIT \\?").
 			WithArgs(uint64(2), 1).WillReturnRows(sqlmock.NewRows([]string{"user_id", "user_name"}).AddRow(2, "author"))
 		mock.ExpectBegin()
+		mock.ExpectQuery("SELECT `user_id` FROM `users`.*FOR UPDATE").WithArgs(uint64(7), 1).WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow(7))
 		if method == "PUT" {
-			mock.ExpectExec("INSERT INTO `user_follows` .* ON DUPLICATE KEY UPDATE `id`=`id`").
-				WithArgs(uint64(7), uint64(2), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, int64(1-i)))
+			rows := sqlmock.NewRows([]string{"id", "follower_id", "followee_id"})
+			if i == 1 {
+				rows.AddRow(1, 7, 2)
+			}
+			mock.ExpectQuery("SELECT .* FROM `user_follows`.*LIMIT").WithArgs(uint64(7), uint64(2), 1).WillReturnRows(rows)
+			if i == 0 {
+				mock.ExpectExec("INSERT INTO `user_follows`").WithArgs(uint64(7), uint64(2), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+				mock.ExpectExec("INSERT INTO `notification_outboxes`").WithArgs("follow:1", uint64(2), uint64(7), "follow", "user", uint64(7), sqlmock.AnyArg(), nil).WillReturnResult(sqlmock.NewResult(1, 1))
+			}
 		} else {
 			mock.ExpectExec("DELETE FROM `user_follows` WHERE follower_id = \\? AND followee_id = \\?").
 				WithArgs(uint64(7), uint64(2)).WillReturnResult(sqlmock.NewResult(0, int64(3-i)))

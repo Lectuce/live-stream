@@ -73,6 +73,12 @@ func Initdb() {
 		panic(fmt.Errorf("Database comment migration failed: %w", err))
 	}
 
+	if err := db.AutoMigrate(&model.ContentLike{}, &model.ContentStat{}, &model.FavoriteFolder{}, &model.FavoriteItem{}, &model.NotificationOutbox{}, &model.Notification{}, &model.Report{}, &model.ReportAction{}); err != nil {
+		panic(fmt.Errorf("Database interaction migration failed: %w", err))
+	}
+	if err := migrateReports(db); err != nil {
+		panic(fmt.Errorf("Database report migration failed: %w", err))
+	}
 	if err := migrateCommentTargets(db); err != nil {
 		panic(fmt.Errorf("Database comment target migration failed: %w", err))
 	}

@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -101,7 +100,16 @@ func ReviewComment(ctx context.Context, id, actor uint64, req model.ReviewCommen
 		if err := recordCommentReview(tx, c, actor, req.Decision, req.Reason); err != nil {
 			return err
 		}
-		return tx.Model(c).Updates(map[string]any{"audit_status": req.Decision, "audit_reason": req.Reason, "version": gorm.Expr("version + 1")}).Error
+		if err := tx.Model(c).Updates(map[string]any{"audit_status": req.Decision, "audit_reason": req.Reason, "version": gorm.Expr("version + 1")}).Error; err != nil {
+			return err
+		}
+		if err := QueueNotification(tx, fmt.Sprintf("comment.review:%d:%d:%s", id, req.Version, req.Decision), "comment.review", "comment", id, actor, c.UserID); err != nil {
+			return err
+		}
+		if req.Decision == "approved" && c.RootID != 0 {
+			return QueueNotification(tx, fmt.Sprintf("comment.reply:%d", id), "comment.reply", "comment", id, c.UserID, c.ReplyToUserID)
+		}
+		return nil
 	})
 }
 
@@ -192,42 +200,23 @@ func CommentHistory(ctx context.Context, id, before uint64, limit int) ([]model.
 }
 
 func ReportComment(ctx context.Context, id, actor uint64, reason string) error {
-	return dao.SC.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		c, err := lockComment(tx, id, true)
-		if err != nil {
-			return err
-		}
-		if c.AuditStatus != "approved" {
-			return gorm.ErrRecordNotFound
-		}
-		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.CommentReport{CommentID: id, UserID: actor, Reason: reason, Status: "pending"}).Error
-	})
+	return SubmitReport(ctx, "comment", fmt.Sprint(id), actor, reason)
 }
-
 func ListCommentReports(ctx context.Context, status string, before uint64, limit int) ([]model.CommentReportView, error) {
-	items := make([]model.CommentReportView, 0)
-	q := dao.SC.Db.WithContext(ctx).Table("comment_reports AS r").Select("r.*, CASE WHEN c.deleted_at IS NULL THEN c.content ELSE '' END AS content, c.version AS comment_version, c.audit_status").Joins("JOIN comments AS c ON c.id = r.comment_id").Where("r.status = ?", status)
-	if before > 0 {
-		q = q.Where("r.id < ?", before)
+	rows, err := ListReports(ctx, status, "comment", before, limit)
+	if err != nil {
+		return nil, err
 	}
-	err := q.Order("r.id DESC").Limit(limit).Scan(&items).Error
-	return items, err
+	items := make([]model.CommentReportView, 0, len(rows))
+	for _, r := range rows {
+		var id uint64
+		fmt.Sscan(r.TargetID, &id)
+		items = append(items, model.CommentReportView{CommentReport: model.CommentReport{ID: r.ID, CommentID: id, UserID: r.UserID, Reason: r.Reason, Status: r.Status, Resolution: r.Resolution, ResolvedBy: r.ResolvedBy, ResolvedAt: r.ResolvedAt, CreatedAt: r.CreatedAt}, Content: r.Preview, CommentVersion: r.Version})
+	}
+	return items, nil
 }
-
 func ResolveCommentReport(ctx context.Context, id, actor uint64, status, reason string) error {
-	return dao.SC.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var report model.CommentReport
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&report, id).Error; err != nil {
-			return err
-		}
-		if report.Status != "pending" {
-			if report.Status == status && report.Resolution == reason && report.ResolvedBy == actor {
-				return nil
-			}
-			return ErrCommentConflict
-		}
-		return tx.Model(&report).Updates(map[string]any{"status": status, "resolution": reason, "resolved_by": actor, "resolved_at": time.Now().UTC()}).Error
-	})
+	return ResolveReport(ctx, id, actor, 0, status, reason)
 }
 
 // Bounded maintenance batch; run repeatedly using the last returned ID to rebuild ranking counters.

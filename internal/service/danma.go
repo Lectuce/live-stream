@@ -30,6 +30,9 @@ func GetDanmaHistory(ctx context.Context, roomID uint64, cursor uint64, limit in
 	if hasMore && len(danmas) > 0 {
 		nextCursor = danmas[len(danmas)-1].ID
 	}
+	if err := repo.RedactHiddenDanmas(ctx, danmas); err != nil {
+		return nil, err
+	}
 	return &model.MessageCursorDTO{
 		Items:      danmas,
 		NextCursor: nextCursor,
@@ -65,6 +68,9 @@ func ReplayDanmaHistory(ctx context.Context, roomID, afterSeq uint64, limit int)
 	nextSeq := afterSeq
 	if len(messages) > 0 {
 		nextSeq = messages[len(messages)-1].RoomSeq
+	}
+	if err := repo.RedactHiddenDanmas(ctx, messages); err != nil {
+		return nil, err
 	}
 	return &model.MessageReplayDTO{
 		Items:   messages,

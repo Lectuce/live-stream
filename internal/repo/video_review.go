@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"live-stream/internal/dao"
@@ -57,6 +58,9 @@ func ReviewVideoTransaction(ctx context.Context, id, reviewerID uint64, req mode
 		if err := tx.Model(&video).Updates(map[string]any{"audit_status": req.Decision, "audit_reason": req.Reason}).Error; err != nil {
 			return err
 		}
-		return tx.Create(&model.VideoReview{VideoID: id, ContentVersion: video.ContentVersion, ReviewerID: reviewerID, ReviewerType: "human", Decision: req.Decision, Reason: req.Reason}).Error
+		if err := tx.Create(&model.VideoReview{VideoID: id, ContentVersion: video.ContentVersion, ReviewerID: reviewerID, ReviewerType: "human", Decision: req.Decision, Reason: req.Reason}).Error; err != nil {
+			return err
+		}
+		return QueueNotification(tx, fmt.Sprintf("video.review:%d:%d:%s", id, video.ContentVersion, req.Decision), "video.review", "video", id, reviewerID, video.OwnerID)
 	})
 }

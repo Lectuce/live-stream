@@ -1,15 +1,18 @@
 package ws
 
 import (
+	"fmt"
 	"live-stream/internal/config"
 	"live-stream/internal/dao"
 	"live-stream/internal/kafka"
 	"live-stream/internal/model"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -51,6 +54,7 @@ type Client struct {
 	control          chan *websocket.PreparedMessage // accepted/error/resync 等高优先级控制消息
 	state            chan *websocket.PreparedMessage // 在线人数等可覆盖的最新状态
 	UserID           uint64                          // 当前客户端的用户id
+	ClientIP         string
 	UserName         string
 	initialLikeCount int64
 	connectionID     uint64
@@ -340,6 +344,26 @@ func (c *Client) readPump() {
 
 		if msg.Type == "" {
 			msg.Type = model.MsgTypeDanma
+		}
+		if msg.Type != model.MsgTypeDanma && msg.Type != model.MsgTypeLike {
+			c.hub.enqueueJSON(c, map[string]interface{}{"type": "error", "code": 400, "message_id": msg.MessageID, "msg": "不支持的消息类型"})
+			continue
+		}
+		if msg.Type == model.MsgTypeDanma {
+			msg.Content = strings.TrimSpace(msg.Content)
+			if !utf8.ValidString(msg.Content) || utf8.RuneCountInString(msg.Content) < 1 || utf8.RuneCountInString(msg.Content) > 500 {
+				c.hub.enqueueJSON(c, map[string]interface{}{"type": "error", "code": 400, "message_id": msg.MessageID, "msg": "弹幕长度须为1–500字"})
+				continue
+			}
+			allowed, limitErr := dao.AllowCommunityWrite(c.hub.ctx, "danmaku", c.UserID, c.ClientIP, fmt.Sprint(c.RoomID))
+			if limitErr != nil {
+				c.hub.enqueueJSON(c, map[string]interface{}{"type": "error", "code": 503, "message_id": msg.MessageID, "msg": "弹幕保护服务暂不可用，请稍后重试"})
+				continue
+			}
+			if !allowed {
+				c.hub.enqueueJSON(c, map[string]interface{}{"type": "error", "code": 429, "message_id": msg.MessageID, "msg": "弹幕发送过快，请稍后重试"})
+				continue
+			}
 		}
 		var likeIdentity dao.RoomLikeIdentity
 		likeReserved := false

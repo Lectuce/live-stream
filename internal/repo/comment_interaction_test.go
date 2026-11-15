@@ -91,6 +91,7 @@ func TestCommentReviewRejectsOldVersionAndRollsBackLogFailure(t *testing.T) {
 				}
 			}
 			if scenario == "success" {
+				mock.ExpectExec("INSERT INTO `notification_outboxes`").WithArgs("comment.review:5:3:approved", uint64(9), uint64(42), "comment.review", "comment", uint64(5), sqlmock.AnyArg(), nil).WillReturnResult(sqlmock.NewResult(1, 1))
 				mock.ExpectCommit()
 			} else {
 				mock.ExpectRollback()
@@ -149,9 +150,14 @@ func TestPendingCommentsCannotBeLikedOrReported(t *testing.T) {
 	for _, action := range []string{"like", "report"} {
 		t.Run(action, func(t *testing.T) {
 			mock := communityDB(t)
-			mock.ExpectBegin()
-			expectInteractionLock(mock, "pending", true)
-			mock.ExpectRollback()
+			if action == "like" {
+				mock.ExpectBegin()
+				expectInteractionLock(mock, "pending", true)
+				mock.ExpectRollback()
+			} else {
+				mock.ExpectQuery("SELECT .* FROM `comments`.*LIMIT").WithArgs(uint64(5), 1).WillReturnRows(interactionRow("pending"))
+				mock.ExpectQuery("SELECT .* FROM comments AS c.*c.audit_status.*c.id.*").WillReturnRows(sqlmock.NewRows([]string{"id"}))
+			}
 			var err error
 			if action == "like" {
 				_, err = SetCommentLike(context.Background(), 5, 9, true)
@@ -180,16 +186,18 @@ func TestHiddenRootBlocksChildInteractions(t *testing.T) {
 
 func TestCommentReportIsUniqueAndResolutionIsAudited(t *testing.T) {
 	mock := communityDB(t)
+	mock.ExpectQuery("SELECT .* FROM `comments`.*LIMIT").WithArgs(uint64(5), 1).WillReturnRows(interactionRow("approved"))
+	mock.ExpectQuery("SELECT .* FROM comments AS c.*c.audit_status.*c.id.*").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(5))
 	mock.ExpectBegin()
-	expectInteractionLock(mock, "approved", true)
-	mock.ExpectExec("INSERT INTO `comment_reports`.*ON DUPLICATE KEY UPDATE").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO `reports`.*ON DUPLICATE KEY UPDATE").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 	if err := ReportComment(context.Background(), 5, 9, "spam"); err != nil {
 		t.Fatal(err)
 	}
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT .* FROM `comment_reports`.*FOR UPDATE").WithArgs(uint64(8), 1).WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow(8, "pending"))
-	mock.ExpectExec("UPDATE `comment_reports` SET `resolution`=\\?,`resolved_at`=\\?,`resolved_by`=\\?,`status`=\\? WHERE `id` = \\?").WithArgs("checked", sqlmock.AnyArg(), uint64(42), "dismissed", uint64(8)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT .* FROM `reports`.*FOR UPDATE").WithArgs(uint64(8), 1).WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow(8, "pending"))
+	mock.ExpectExec("INSERT INTO `report_actions`").WithArgs(uint64(8), uint64(42), "dismissed", "checked", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("UPDATE `reports` SET .*WHERE `id`").WithArgs("checked", sqlmock.AnyArg(), uint64(42), "dismissed", uint64(8)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	if err := ResolveCommentReport(context.Background(), 8, 42, "dismissed", "checked"); err != nil {
 		t.Fatal(err)

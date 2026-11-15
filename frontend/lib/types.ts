@@ -15,7 +15,7 @@ export interface CommentReport { report_id: string; comment_id: string; user_id:
 
 export interface PostImage { image_id: string; url: string; }
 export interface Post {
-  post_id: string; owner_id: string; content: string; status: 'draft' | 'published';
+  post_id: string; owner_id: string; content: string; status: 'draft' | 'published' | 'hidden';
   version: string; published_at: string | null; created_at: string; updated_at: string; images: PostImage[];
 }
 export interface PostPage { items: Post[]; next_cursor: string; has_more: boolean; }

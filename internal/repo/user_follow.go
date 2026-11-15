@@ -2,6 +2,8 @@ package repo
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 
 	"live-stream/internal/dao"
 	"live-stream/internal/model"
@@ -44,14 +46,28 @@ func SelectPublicAuthorVideos(ctx context.Context, ownerID, beforeID uint64, lim
 }
 
 func SetUserFollow(ctx context.Context, followerID, followeeID uint64, follow bool) error {
-	db := dao.SC.Db.WithContext(ctx)
-	if !follow {
-		return db.Where("follower_id = ? AND followee_id = ?", followerID, followeeID).Delete(&model.UserFollow{}).Error
-	}
-	// MySQL uses a no-op ON DUPLICATE KEY UPDATE; retries never create a second relation.
-	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.UserFollow{
-		FollowerID: followerID, FolloweeID: followeeID,
-	}).Error
+	return dao.SC.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var user model.User
+		if err := tx.Select("user_id").Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", followerID).First(&user).Error; err != nil {
+			return err
+		}
+		if !follow {
+			return tx.Where("follower_id = ? AND followee_id = ?", followerID, followeeID).Delete(&model.UserFollow{}).Error
+		}
+		var existing model.UserFollow
+		result := tx.Where("follower_id = ? AND followee_id = ?", followerID, followeeID).Limit(1).Find(&existing)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 0 {
+			return nil
+		}
+		relation := model.UserFollow{FollowerID: followerID, FolloweeID: followeeID}
+		if err := tx.Create(&relation).Error; err != nil {
+			return err
+		}
+		return QueueNotification(tx, fmt.Sprintf("follow:%d", relation.ID), "follow", "user", followerID, followerID, followeeID)
+	}, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 }
 
 func SelectFollowState(ctx context.Context, followerID, followeeID uint64) (*model.FollowState, error) {

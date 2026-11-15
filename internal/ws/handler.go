@@ -87,6 +87,7 @@ func ServeWs(hub *Hub, c *gin.Context) {
 	}
 
 	client := NewClient(hub, conn, rid, uid, uname, room.LikeCount)
+	client.ClientIP = c.ClientIP()
 	client.hub.register <- client
 	go client.writePump()
 

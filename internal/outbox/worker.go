@@ -27,15 +27,16 @@ func Topic() string {
 	return "content-events"
 }
 
-// Start owns both workers. Caller cancels ctx and waits for done on shutdown.
+// Start owns the content workers and notification delivery worker. Caller cancels ctx and waits for done on shutdown.
 func Start(ctx context.Context, brokers []string) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		var workers sync.WaitGroup
-		workers.Add(2)
+		workers.Add(3)
 		go func() { defer workers.Done(); dispatch(ctx, brokers) }()
 		go func() { defer workers.Done(); consume(ctx, brokers) }()
+		go func() { defer workers.Done(); deliverNotifications(ctx) }()
 		workers.Wait()
 	}()
 	return done

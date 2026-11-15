@@ -25,7 +25,7 @@ export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
 
-async function request<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
     const headers = new Headers(init?.headers);

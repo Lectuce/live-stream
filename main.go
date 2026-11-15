@@ -64,6 +64,10 @@ func main() {
 	}()
 
 	r := gin.Default()
+	// Only local reverse proxies may supply client IP headers.
+	if err := r.SetTrustedProxies([]string{"127.0.0.1", "::1"}); err != nil {
+		log.Fatal(err)
+	}
 
 	rousters.SetUpRousters(r, hub)
 

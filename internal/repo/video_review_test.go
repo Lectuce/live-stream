@@ -12,7 +12,7 @@ import (
 )
 
 func TestReviewTransactionAtomicity(t *testing.T) {
-	for _, scenario := range []string{"success", "stale", "log failure"} {
+	for _, scenario := range []string{"success", "stale", "log failure", "notification failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			conn, mock, err := sqlmock.New()
 			if err != nil {
@@ -27,7 +27,7 @@ func TestReviewTransactionAtomicity(t *testing.T) {
 			dao.SC = &model.StorageContainer{Db: db}
 			defer func() { dao.SC = previous }()
 			mock.ExpectBegin()
-			mock.ExpectQuery("SELECT .*videos.*FOR UPDATE").WillReturnRows(sqlmock.NewRows([]string{"video_id", "content_version", "audit_status", "process_status", "publish_status", "media_file"}).AddRow(1, 3, "pending", "ready", "draft", "file.mp4"))
+			mock.ExpectQuery("SELECT .*videos.*FOR UPDATE").WillReturnRows(sqlmock.NewRows([]string{"video_id", "owner_id", "content_version", "audit_status", "process_status", "publish_status", "media_file"}).AddRow(1, 7, 3, "pending", "ready", "draft", "file.mp4"))
 			guardErr := errors.New("stale")
 			if scenario == "stale" {
 				mock.ExpectRollback()
@@ -38,7 +38,14 @@ func TestReviewTransactionAtomicity(t *testing.T) {
 					mock.ExpectRollback()
 				} else {
 					mock.ExpectExec("INSERT INTO .*video_reviews.*").WillReturnResult(sqlmock.NewResult(1, 1))
-					mock.ExpectCommit()
+					event := mock.ExpectExec("INSERT INTO `notification_outboxes`").WithArgs("video.review:1:3:approved", uint64(7), uint64(42), "video.review", "video", uint64(1), sqlmock.AnyArg(), nil)
+					if scenario == "notification failure" {
+						event.WillReturnError(errors.New("outbox unavailable"))
+						mock.ExpectRollback()
+					} else {
+						event.WillReturnResult(sqlmock.NewResult(1, 1))
+						mock.ExpectCommit()
+					}
 				}
 			}
 			err = ReviewVideoTransaction(context.Background(), 1, 42, model.ReviewVideoRequest{ContentVersion: 3, Decision: "approved"}, func(v *model.Video) error {
