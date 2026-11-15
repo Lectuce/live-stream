@@ -56,13 +56,13 @@ func TestCreatePostRootAndReply(t *testing.T) {
 			if parentID != 0 {
 				rootID, replyTo = 11, 8
 				mock.ExpectQuery("SELECT .* FROM `comments` WHERE id = \\? AND target_type = \\? AND target_id = \\?.*LIMIT \\?").WithArgs(parentID, "post", uint64(7), 1).
-					WillReturnRows(sqlmock.NewRows([]string{"id", "root_id", "user_id"}).AddRow(22, 11, 8))
+					WillReturnRows(sqlmock.NewRows([]string{"id", "root_id", "user_id", "audit_status"}).AddRow(22, 11, 8, "approved"))
 				mock.ExpectQuery("SELECT .* FROM `comments` WHERE id = \\? AND target_type = \\? AND target_id = \\? AND root_id = 0.*FOR UPDATE").WithArgs(rootID, "post", uint64(7), 1).
-					WillReturnRows(sqlmock.NewRows([]string{"id", "root_id", "user_id"}).AddRow(11, 0, 6))
+					WillReturnRows(sqlmock.NewRows([]string{"id", "root_id", "user_id", "audit_status"}).AddRow(11, 0, 6, "approved"))
 				mock.ExpectQuery("SELECT .* FROM `comments` WHERE id = \\? AND target_type = \\? AND target_id = \\? AND root_id = \\?.*FOR SHARE").WithArgs(parentID, "post", uint64(7), rootID, 1).
-					WillReturnRows(sqlmock.NewRows([]string{"id", "root_id", "user_id"}).AddRow(22, 11, 8))
+					WillReturnRows(sqlmock.NewRows([]string{"id", "root_id", "user_id", "audit_status"}).AddRow(22, 11, 8, "approved"))
 			}
-			mock.ExpectExec("INSERT INTO `comments`").WithArgs(uint64(0), "post", uint64(7), uint64(9), rootID, parentID, replyTo, commentRequestID, "hello", sqlmock.AnyArg(), nil).WillReturnResult(sqlmock.NewResult(33, 1))
+			mock.ExpectExec("INSERT INTO `comments`").WithArgs(uint64(0), "post", uint64(7), uint64(9), rootID, parentID, replyTo, commentRequestID, "hello", sqlmock.AnyArg(), nil, uint64(1), "pending", "", int64(0)).WillReturnResult(sqlmock.NewResult(33, 1))
 			mock.ExpectCommit()
 			c, err := CreateComment(context.Background(), "post", 7, 9, model.CreateCommentRequest{Content: "hello", ParentID: parentID, RequestID: commentRequestID})
 			if err != nil || c.TargetType != "post" || c.TargetID != 7 || c.VideoID != 0 || c.RootID != rootID || c.ReplyToUserID != replyTo {
@@ -117,7 +117,7 @@ func TestPostCommentListScopesRepliesAndCounts(t *testing.T) {
 	expectCommentPost(mock, true, false)
 	mock.ExpectQuery("SELECT `id` FROM `comments` WHERE id = \\? AND target_type = \\? AND target_id = \\? AND root_id = 0.*LIMIT \\?").WithArgs(uint64(11), "post", uint64(7), 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(11))
-	mock.ExpectQuery("SELECT .*r.target_type = c.target_type AND r.target_id = c.target_id AND r.root_id = c.id.*JOIN posts AS p ON p.post_id = c.target_id AND p.status = 'published' AND p.deleted_at IS NULL.*WHERE c.target_type = \\? AND c.target_id = \\? AND c.root_id = \\?.*ORDER BY c.created_at DESC, c.id DESC LIMIT \\?").WithArgs("post", uint64(7), uint64(11), 21).
+	mock.ExpectQuery("SELECT .*r.target_type = c.target_type AND r.target_id = c.target_id AND r.root_id = c.id.*JOIN posts AS p ON p.post_id = c.target_id AND p.status = 'published' AND p.deleted_at IS NULL.*WHERE .*c.target_type = \\? AND c.target_id = \\?.*c.audit_status = 'approved'.*root.audit_status = 'approved'.*c.root_id = \\?.*ORDER BY c.created_at DESC, c.id DESC LIMIT \\?").WithArgs("post", uint64(7), uint64(11), 21).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "target_type", "target_id", "root_id", "content"}).AddRow(22, "post", 7, 11, "reply"))
 	items, err := ListComments(context.Background(), "post", 7, 11, time.Time{}, 0, 21)
 	if err != nil || len(items) != 1 || items[0].TargetType != "post" {
@@ -147,7 +147,8 @@ func TestPostCommentDeleteChecksTypeTargetAndOwner(t *testing.T) {
 			}
 			mock.ExpectQuery("SELECT .* FROM `comments` WHERE id = \\? AND target_type = \\? AND target_id = \\? AND user_id = \\?.*FOR UPDATE").WithArgs(uint64(22), "post", uint64(7), uint64(9), 1).WillReturnRows(rows)
 			if found {
-				mock.ExpectExec("UPDATE `comments` SET `content`=\\?,`deleted_at`=\\? WHERE `id` = \\?").WithArgs("", sqlmock.AnyArg(), uint64(22)).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec("INSERT INTO `comment_reviews`").WillReturnResult(sqlmock.NewResult(1, 1))
+				mock.ExpectExec("UPDATE `comments` SET `content`=\\?,`deleted_at`=\\?,`version`=version \\+ 1 WHERE `id` = \\?").WithArgs("", sqlmock.AnyArg(), uint64(22)).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectCommit()
 			} else {
 				mock.ExpectRollback()

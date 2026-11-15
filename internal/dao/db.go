@@ -69,7 +69,7 @@ func Initdb() {
 	if err := db.AutoMigrate(&model.Post{}, &model.PostImage{}, &model.FeedEvent{}, &model.OutboxEvent{}, &model.FeedDeadLetter{}); err != nil {
 		panic(fmt.Errorf("Database community migration failed: %w", err))
 	}
-	if err := db.AutoMigrate(&model.Comment{}); err != nil {
+	if err := db.AutoMigrate(&model.Comment{}, &model.CommentLike{}, &model.CommentReview{}, &model.CommentReport{}); err != nil {
 		panic(fmt.Errorf("Database comment migration failed: %w", err))
 	}
 

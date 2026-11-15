@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"live-stream/internal/dao"
 	"live-stream/internal/middleware"
 	"live-stream/internal/model"
 	"live-stream/internal/repo"
@@ -20,14 +21,18 @@ func commentError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		c.JSON(404, gin.H{"message": "内容或评论不存在、不可见，或无权操作"})
+	case errors.Is(err, repo.ErrCommentConflict):
+		c.JSON(409, gin.H{"message": "评论已发生变化，请刷新后操作"})
+	case errors.Is(err, dao.ErrCommentSnapshotExpired):
+		c.JSON(410, gin.H{"message": "热门评论已过期，请刷新评论"})
 	case errors.Is(err, service.ErrCommentInput):
-		c.JSON(400, gin.H{"message": "评论须为1–2000字，并提供有效的request_id"})
+		c.JSON(400, gin.H{"message": "参数无效：正文1–2000字，理由至多1000字，请检查请求ID和版本"})
 	case errors.Is(err, service.ErrCommentCursor):
 		c.JSON(400, gin.H{"message": "评论游标无效，请刷新"})
 	case errors.Is(err, repo.ErrCommentTarget):
 		c.JSON(400, gin.H{"message": "回复目标不属于当前内容或不存在"})
 	case errors.Is(err, repo.ErrCommentClosed):
-		c.JSON(409, gin.H{"message": "评论已删除，该讨论不再接受此回复"})
+		c.JSON(409, gin.H{"message": "评论已删除或未公开，该讨论暂不接受互动"})
 	case errors.Is(err, repo.ErrCommentRequest):
 		c.JSON(409, gin.H{"message": "request_id已用于另一条评论"})
 	default:
@@ -79,7 +84,7 @@ func listCommentPage(c *gin.Context, targetType string, replies bool) {
 		c.JSON(400, gin.H{"message": "limit必须在1到50之间"})
 		return
 	}
-	page, err := service.ListComments(c.Request.Context(), targetType, targetID, root, c.Query("cursor"), limit)
+	page, err := service.GetCommentPage(c.Request.Context(), targetType, targetID, root, optionalCommentViewer(c), c.DefaultQuery("sort", "latest"), c.Query("cursor"), limit)
 	if err != nil {
 		commentError(c, err)
 		return
@@ -112,7 +117,7 @@ func createComment(c *gin.Context, targetType string) {
 		commentError(c, err)
 		return
 	}
-	c.JSON(200, gin.H{"data": comment, "message": "评论已发送"})
+	c.JSON(200, gin.H{"data": comment, "message": "评论已提交，等待审核"})
 }
 
 func deleteComment(c *gin.Context, targetType string) {

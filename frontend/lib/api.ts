@@ -19,6 +19,7 @@ import type {
   PostImage,
   CommentPage,
   CommentTargetType,
+  Page, CommentReview, CommentReport,
 } from '@/lib/types';
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -45,8 +46,18 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
 }
 
 export const api = {
-  comments: (base: string, targetType: CommentTargetType, targetID: string, root = '', cursor = '', signal?: AbortSignal) =>
-    request<ApiEnvelope<CommentPage>>(base, `/api/v1/${targetType === 'video' ? 'videos' : 'posts'}/${encodeURIComponent(targetID)}/comments${root ? `/${encodeURIComponent(root)}/replies` : ''}?${new URLSearchParams({ cursor, limit: '20' })}`, { signal, cache: 'no-store' }),
+  myComments: (base: string, targetType: CommentTargetType, targetID: string, cursor = '', signal?: AbortSignal) => request<ApiEnvelope<CommentPage>>(base, `/api/v1/comments/mine?${new URLSearchParams({target_type: targetType, target_id: targetID, cursor})}`, {signal, cache:'no-store'}),
+  editComment: (base: string, id: string, version: string, content: string) => request<{message:string}>(base, `/api/v1/comments/${id}`, {method:'PATCH', body:JSON.stringify({version,content})}),
+  likeComment: (base: string, id: string, liked: boolean) => request<ApiEnvelope<{liked:boolean;like_count:number}>>(base, `/api/v1/comments/${id}/like`, {method:liked?'PUT':'DELETE'}),
+  reportComment: (base: string, id: string, reason: string) => request<{message:string}>(base, `/api/v1/comments/${id}/reports`, {method:'POST',body:JSON.stringify({reason})}),
+  reviewComments: (base: string, status: string, cursor = '', signal?: AbortSignal) => request<ApiEnvelope<CommentPage>>(base, `/api/v1/admin/comments?${new URLSearchParams({status,cursor})}`, {signal,cache:'no-store'}),
+  reviewComment: (base: string, id: string, version: string, decision: string, reason: string) => request<{message:string}>(base, `/api/v1/admin/comments/${id}/review`, {method:'POST',body:JSON.stringify({version,decision,reason})}),
+  commentHistory: (base: string, id: string, cursor = '', signal?: AbortSignal) => request<ApiEnvelope<Page<CommentReview>>>(base, `/api/v1/admin/comments/${id}/history?${new URLSearchParams({cursor})}`, {signal,cache:'no-store'}),
+  commentReports: (base: string, status: string, cursor = '', signal?: AbortSignal) => request<ApiEnvelope<Page<CommentReport>>>(base, `/api/v1/admin/comment-reports?${new URLSearchParams({status,cursor})}`, {signal,cache:'no-store'}),
+  resolveCommentReport: (base: string, id: string, status: string, reason: string) => request<{message:string}>(base, `/api/v1/admin/comment-reports/${id}/resolve`, {method:'POST',body:JSON.stringify({status,reason})}),
+
+  comments: (base: string, targetType: CommentTargetType, targetID: string, root = '', cursor = '', signal?: AbortSignal, sort: 'latest' | 'hot' = 'latest') =>
+    request<ApiEnvelope<CommentPage>>(base, `/api/v1/${targetType === 'video' ? 'videos' : 'posts'}/${encodeURIComponent(targetID)}/comments${root ? `/${encodeURIComponent(root)}/replies` : ''}?${new URLSearchParams({ cursor, limit: '20', sort })}`, { signal, cache: 'no-store' }),
   createComment: (base: string, targetType: CommentTargetType, targetID: string, content: string, parentID: string, requestID: string, signal?: AbortSignal) =>
     request<ApiEnvelope<{ comment_id: string }>>(base, `/api/v1/${targetType === 'video' ? 'videos' : 'posts'}/${encodeURIComponent(targetID)}/comments`, { method: 'POST', body: JSON.stringify({ content, parent_id: parentID, request_id: requestID }), signal }),
   deleteComment: (base: string, targetType: CommentTargetType, targetID: string, id: string, signal?: AbortSignal) =>

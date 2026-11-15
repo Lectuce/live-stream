@@ -6,8 +6,12 @@ export interface ContentComment {
   comment_id: string; target_type: CommentTargetType; target_id: string; video_id?: string; user_id: string; root_id: string; parent_id: string;
   reply_to_user_id: string; content: string; created_at: string; deleted_at: string | null;
   user_name: string; avatar_url: string; reply_to_user_name: string; reply_count: number;
+  version: string; audit_status: 'pending' | 'approved' | 'rejected' | 'hidden'; audit_reason: string; like_count: number; liked: boolean;
 }
-export interface CommentPage { items: ContentComment[]; next_cursor: string; has_more: boolean; }
+export interface Page<T> { items: T[]; next_cursor: string; has_more: boolean; }
+export interface CommentPage extends Page<ContentComment> { truncated?: boolean; }
+export interface CommentReview { review_id: string; actor_id: string; version: string; action: string; reason: string; created_at: string; }
+export interface CommentReport { report_id: string; comment_id: string; user_id: string; reason: string; status: string; resolution: string; resolved_by: string; resolved_at: string | null; created_at: string; content: string; comment_version: string; audit_status: string; }
 
 export interface PostImage { image_id: string; url: string; }
 export interface Post {

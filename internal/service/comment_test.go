@@ -40,7 +40,7 @@ func TestCommentCursorScope(t *testing.T) {
 		data, _ := json.Marshal(c)
 		return base64.RawURLEncoding.EncodeToString(data)
 	}
-	valid := commentCursor{Version: 2, TargetType: "video", TargetID: 7, RootID: 11, ID: 22, Time: stamp}
+	valid := commentCursor{Version: 3, Sort: "latest", TargetType: "video", TargetID: 7, RootID: 11, ID: 22, Time: stamp}
 	if _, err := decodeCommentCursor(encode(valid), "video", 7, 11); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestCommentCursorScope(t *testing.T) {
 			t.Fatal("cross-scope cursor accepted")
 		}
 	}
-	for _, value := range []string{"invalid", strings.Repeat("x", 1025), encode(commentCursor{Version: 2, TargetType: "video", TargetID: 7, RootID: 11, ID: 0, Time: stamp})} {
+	for _, value := range []string{"invalid", strings.Repeat("x", 1025), encode(commentCursor{Version: 3, Sort: "latest", TargetType: "video", TargetID: 7, RootID: 11, ID: 0, Time: stamp})} {
 		if _, err := decodeCommentCursor(value, "video", 7, 11); err == nil {
 			t.Fatal("invalid cursor accepted")
 		}

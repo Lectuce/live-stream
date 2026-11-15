@@ -46,12 +46,12 @@ func TestCreateCommentDerivesRootAndReplyUser(t *testing.T) {
 	expectCommentVideo(mock, true, true)
 	expectNoPriorComment(mock)
 	mock.ExpectQuery("SELECT .* FROM `comments` WHERE id = \\? AND target_type = \\? AND target_id = \\?.*LIMIT \\?").WithArgs(uint64(22), "video", uint64(7), 1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "video_id", "root_id", "user_id"}).AddRow(22, 7, 11, 8))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "video_id", "root_id", "user_id", "audit_status"}).AddRow(22, 7, 11, 8, "approved"))
 	mock.ExpectQuery("SELECT .* FROM `comments` WHERE id = \\? AND target_type = \\? AND target_id = \\? AND root_id = 0.*FOR UPDATE").WithArgs(uint64(11), "video", uint64(7), 1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "video_id", "root_id", "user_id"}).AddRow(11, 7, 0, 6))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "video_id", "root_id", "user_id", "audit_status"}).AddRow(11, 7, 0, 6, "approved"))
 	mock.ExpectQuery("SELECT .* FROM `comments` WHERE id = \\? AND target_type = \\? AND target_id = \\? AND root_id = \\?.*FOR SHARE").WithArgs(uint64(22), "video", uint64(7), uint64(11), 1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "video_id", "root_id", "user_id"}).AddRow(22, 7, 11, 8))
-	mock.ExpectExec("INSERT INTO `comments`").WithArgs(uint64(7), "video", uint64(7), uint64(9), uint64(11), uint64(22), uint64(8), commentRequestID, "reply", sqlmock.AnyArg(), nil).WillReturnResult(sqlmock.NewResult(33, 1))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "video_id", "root_id", "user_id", "audit_status"}).AddRow(22, 7, 11, 8, "approved"))
+	mock.ExpectExec("INSERT INTO `comments`").WithArgs(uint64(7), "video", uint64(7), uint64(9), uint64(11), uint64(22), uint64(8), commentRequestID, "reply", sqlmock.AnyArg(), nil, uint64(1), "pending", "", int64(0)).WillReturnResult(sqlmock.NewResult(33, 1))
 	mock.ExpectCommit()
 	c, err := CreateVideoComment(context.Background(), 7, 9, model.CreateCommentRequest{Content: "reply", ParentID: 22, RequestID: commentRequestID})
 	if err != nil {
@@ -79,7 +79,7 @@ func TestCrossVideoAndDeletedThreadRejectReplies(t *testing.T) {
 				if scenario == "deleted root" {
 					deleted = time.Now()
 				}
-				mock.ExpectQuery("SELECT .* FROM `comments`.*root_id = 0.*FOR UPDATE").WillReturnRows(sqlmock.NewRows([]string{"id", "video_id", "deleted_at"}).AddRow(11, 7, deleted))
+				mock.ExpectQuery("SELECT .* FROM `comments`.*root_id = 0.*FOR UPDATE").WillReturnRows(sqlmock.NewRows([]string{"id", "video_id", "deleted_at", "audit_status"}).AddRow(11, 7, deleted, "approved"))
 				if scenario == "deleted parent" {
 					mock.ExpectQuery("SELECT .* FROM `comments`.*FOR SHARE").WillReturnRows(sqlmock.NewRows([]string{"id", "video_id", "root_id", "deleted_at"}).AddRow(22, 7, 11, time.Now()))
 				}
@@ -136,7 +136,8 @@ func TestDeleteCommentClearsBodyPreservesTreeAndChecksOwner(t *testing.T) {
 			}
 			mock.ExpectQuery("SELECT .* FROM `comments` WHERE id = \\? AND target_type = \\? AND target_id = \\? AND user_id = \\?.*FOR UPDATE").WithArgs(uint64(5), "video", uint64(7), uint64(9), 1).WillReturnRows(rows)
 			if scenario == "delete" {
-				mock.ExpectExec("UPDATE `comments` SET `content`=\\?,`deleted_at`=\\? WHERE `id` = \\?").WithArgs("", sqlmock.AnyArg(), uint64(5)).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec("INSERT INTO `comment_reviews`").WillReturnResult(sqlmock.NewResult(1, 1))
+				mock.ExpectExec("UPDATE `comments` SET `content`=\\?,`deleted_at`=\\?,`version`=version \\+ 1 WHERE `id` = \\?").WithArgs("", sqlmock.AnyArg(), uint64(5)).WillReturnResult(sqlmock.NewResult(0, 1))
 			}
 			if scenario == "wrong owner" {
 				mock.ExpectRollback()
@@ -159,7 +160,7 @@ func TestCommentListRetainsTombstonesAndFiltersVideo(t *testing.T) {
 	mock := communityDB(t)
 	expectCommentVideo(mock, true, false)
 	stamp := time.Now().Truncate(time.Microsecond)
-	mock.ExpectQuery("SELECT .*CASE WHEN c.deleted_at IS NULL THEN c.content ELSE '' END AS content.*JOIN videos AS v.*v.publish_status = 'published'.*v.audit_status = 'approved'.*v.deleted_at IS NULL.*WHERE .*c.target_type = \\? AND c.target_id = \\? AND c.root_id = \\?.*c.created_at < \\?.*c.id < \\?.*ORDER BY c.created_at DESC, c.id DESC LIMIT \\?").WithArgs("video", uint64(7), uint64(0), stamp, stamp, uint64(10), 21).
+	mock.ExpectQuery("SELECT .*CASE WHEN c.deleted_at IS NULL THEN c.content ELSE '' END AS content.*JOIN videos AS v.*v.publish_status = 'published'.*v.audit_status = 'approved'.*v.deleted_at IS NULL.*WHERE .*c.target_type = \\? AND c.target_id = \\?.*c.audit_status = 'approved'.*root.audit_status = 'approved'.*c.root_id = \\?.*c.created_at < \\?.*c.id < \\?.*ORDER BY c.created_at DESC, c.id DESC LIMIT \\?").WithArgs("video", uint64(7), uint64(0), stamp, stamp, uint64(10), 21).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "deleted_at", "reply_count"}).AddRow(5, "", stamp, 3))
 	items, err := ListVideoComments(context.Background(), 7, 0, stamp, 10, 21)
 	if err != nil {

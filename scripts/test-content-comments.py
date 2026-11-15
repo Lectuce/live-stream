@@ -72,6 +72,8 @@ def main():
         parser.error('图文模式还需 --video-id，用于验证视频/图文隔离；推荐选择与图文相同数字的公开视频ID')
     a, b, guest = (Client(args.base_url) for _ in range(3))
     user_a, user_b = a.login('账号 A '), b.login('账号 B ')
+    admin = Client(args.base_url)
+    admin.login('管理员（用于批准测试评论） ')
     assert user_a['user_id'] != user_b['user_id'], '请使用两个不同账号'
     base = f'/api/v1/{kind}s/{target_id}/comments'
     other = f'/api/v1/{kind}s/{other_id}/comments'
@@ -86,6 +88,8 @@ def main():
         item = client.call(base, 'POST', command)['data']
         if not any(comment_id == item['comment_id'] for _, comment_id in created):
             created.append((client, item['comment_id']))
+        if item['audit_status'] != 'approved':
+            admin.call(f"/api/v1/admin/comments/{item['comment_id']}/review", 'POST', {'version':item['version'], 'decision':'approved', 'reason':'测试验收'})
         return item, command
 
     try:

@@ -19,6 +19,7 @@ var ErrCommentCursor = errors.New("invalid comment cursor")
 
 type commentCursor struct {
 	Version    int       `json:"v"`
+	Sort       string    `json:"sort"`
 	TargetType string    `json:"target_type"`
 	TargetID   uint64    `json:"target_id,string"`
 	RootID     uint64    `json:"root_id,string"`
@@ -59,7 +60,7 @@ func decodeCommentCursor(value string, targetType string, targetID, rootID uint6
 	if err != nil {
 		return cursor, ErrCommentCursor
 	}
-	if json.Unmarshal(data, &cursor) != nil || cursor.Version != 2 || cursor.TargetType != targetType || cursor.TargetID != targetID || cursor.RootID != rootID || cursor.ID == 0 || cursor.Time.IsZero() || cursor.Time.Year() < 1970 || cursor.Time.Year() > 9999 || cursor.Time.Nanosecond()%1000 != 0 {
+	if json.Unmarshal(data, &cursor) != nil || cursor.Version != 3 || cursor.Sort != "latest" || cursor.TargetType != targetType || cursor.TargetID != targetID || cursor.RootID != rootID || cursor.ID == 0 || cursor.Time.IsZero() || cursor.Time.Year() < 1970 || cursor.Time.Year() > 9999 || cursor.Time.Nanosecond()%1000 != 0 {
 		return cursor, ErrCommentCursor
 	}
 	return cursor, nil
@@ -81,7 +82,7 @@ func ListComments(ctx context.Context, targetType string, targetID, rootID uint6
 	if page.HasMore {
 		page.Items = items[:limit]
 		last := page.Items[limit-1]
-		data, err := json.Marshal(commentCursor{Version: 2, TargetType: targetType, TargetID: targetID, RootID: rootID, Time: last.CreatedAt, ID: last.ID})
+		data, err := json.Marshal(commentCursor{Version: 3, Sort: "latest", TargetType: targetType, TargetID: targetID, RootID: rootID, Time: last.CreatedAt, ID: last.ID})
 		if err != nil {
 			return nil, err
 		}

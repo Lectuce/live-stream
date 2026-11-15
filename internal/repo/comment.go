@@ -69,7 +69,7 @@ func CreateComment(ctx context.Context, targetType string, targetID, userID uint
 			comment = *existing
 			return matchCommentRequest(existing, targetType, targetID, req)
 		}
-		comment = model.Comment{TargetType: targetType, TargetID: targetID, UserID: userID, ParentID: req.ParentID, Content: req.Content, RequestID: req.RequestID, CreatedAt: time.Now().UTC().Truncate(time.Microsecond)}
+		comment = model.Comment{TargetType: targetType, TargetID: targetID, UserID: userID, ParentID: req.ParentID, Content: req.Content, RequestID: req.RequestID, CreatedAt: time.Now().UTC().Truncate(time.Microsecond), Version: 1, AuditStatus: "pending"}
 		if targetType == model.CommentTargetVideo {
 			comment.VideoID = targetID
 		}
@@ -89,7 +89,7 @@ func CreateComment(ctx context.Context, targetType string, targetID, userID uint
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND target_type = ? AND target_id = ? AND root_id = 0", rootID, targetType, targetID).First(&root).Error; err != nil {
 				return err
 			}
-			if root.DeletedAt != nil {
+			if root.DeletedAt != nil || root.AuditStatus != "approved" {
 				return ErrCommentClosed
 			}
 			if parent.ID == root.ID {
@@ -102,7 +102,7 @@ func CreateComment(ctx context.Context, targetType string, targetID, userID uint
 				}
 				parent = lockedParent
 			}
-			if parent.DeletedAt != nil {
+			if parent.DeletedAt != nil || parent.AuditStatus != "approved" {
 				return ErrCommentClosed
 			}
 			comment.RootID = rootID
@@ -131,23 +131,12 @@ func ListComments(ctx context.Context, targetType string, targetID, rootID uint6
 	}
 	if rootID != 0 {
 		var root model.Comment
-		if err := db.Select("id").Where("id = ? AND target_type = ? AND target_id = ? AND root_id = 0", rootID, targetType, targetID).First(&root).Error; err != nil {
+		if err := db.Select("id").Where("id = ? AND target_type = ? AND target_id = ? AND root_id = 0 AND audit_status = 'approved'", rootID, targetType, targetID).First(&root).Error; err != nil {
 			return nil, err
 		}
 	}
 	items := make([]model.CommentView, 0)
-	q := db.Table("comments AS c").Select(`c.id,c.video_id,c.target_type,c.target_id,c.user_id,c.root_id,c.parent_id,c.reply_to_user_id,
-		CASE WHEN c.deleted_at IS NULL THEN c.content ELSE '' END AS content,c.created_at,c.deleted_at,
-		COALESCE(u.user_name,'已注销用户') AS user_name,COALESCE(u.avatar_url,'') AS avatar_url,
-		COALESCE(ru.user_name,'') AS reply_to_user_name,
-		(SELECT COUNT(*) FROM comments AS r WHERE r.target_type = c.target_type AND r.target_id = c.target_id AND r.root_id = c.id) AS reply_count`).
-		Joins("LEFT JOIN users AS u ON u.user_id = c.user_id").Joins("LEFT JOIN users AS ru ON ru.user_id = c.reply_to_user_id").
-		Where("c.target_type = ? AND c.target_id = ? AND c.root_id = ?", targetType, targetID, rootID)
-	if targetType == model.CommentTargetVideo {
-		q = q.Joins("JOIN videos AS v ON v.video_id = c.target_id AND v.publish_status = 'published' AND v.process_status = 'ready' AND v.audit_status = 'approved' AND v.deleted_at IS NULL")
-	} else {
-		q = q.Joins("JOIN posts AS p ON p.post_id = c.target_id AND p.status = 'published' AND p.deleted_at IS NULL")
-	}
+	q := publicCommentQuery(db, targetType, targetID).Where("c.root_id = ?", rootID)
 	if beforeID > 0 {
 		q = q.Where("(c.created_at < ? OR (c.created_at = ? AND c.id < ?))", before, before, beforeID)
 	}
@@ -164,7 +153,10 @@ func DeleteComment(ctx context.Context, targetType string, targetID, commentID, 
 		if c.DeletedAt != nil {
 			return nil
 		}
-		return tx.Model(&c).Updates(map[string]any{"deleted_at": time.Now().UTC(), "content": ""}).Error
+		if err := recordCommentReview(tx, &c, userID, "deleted", ""); err != nil {
+			return err
+		}
+		return tx.Model(&c).Updates(map[string]any{"deleted_at": time.Now().UTC(), "content": "", "version": gorm.Expr("version + 1")}).Error
 	})
 }
 
