@@ -20,13 +20,13 @@ import {
 } from '@/lib/interactions';
 import type { Page } from '@/lib/types';
 
-export function MemberGate({ children }: { children: React.ReactNode }) {
+export function MemberGate({ children, message = '登录后查看自己的收藏和消息' }: { children: React.ReactNode; message?: string }) {
   const { user, loading } = useAuth();
   const [open, setOpen] = useState(false);
   if (user) return <>{children}</>;
   return (
     <div className="creator-panel mt-8 p-12 text-center">
-      <p>{loading ? '正在确认登录状态…' : '登录后查看自己的收藏和消息'}</p>
+      <p>{loading ? '正在确认登录状态…' : message}</p>
       {!loading && (
         <button
           className="creator-primary mx-auto mt-5"

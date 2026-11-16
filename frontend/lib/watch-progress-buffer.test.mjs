@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import { WatchProgressBuffer, resumePosition } from './watch-progress-buffer.ts';
+
+const buffer = new WatchProgressBuffer();
+buffer.sample(60000);
+const first = buffer.pending;
+assert.deepEqual(first, { seq: 1, position_ms: 60000 });
+buffer.sample(60000);
+assert.equal(buffer.pending, first, 'unchanged position keeps the retry payload');
+buffer.sample(30000);
+assert.deepEqual(buffer.pending, { seq: 2, position_ms: 30000 }, 'intentional rewind is a newer sample');
+buffer.acknowledge(1);
+assert.equal(buffer.pending.seq, 2, 'old response must not discard newer progress');
+buffer.acknowledge(2);
+assert.equal(buffer.pending, null);
+buffer.sample(NaN); buffer.sample(-1);
+assert.equal(buffer.pending, null);
+assert.equal(resumePosition(60000, 120000), 60000);
+assert.equal(resumePosition(119000, 120000), 0);
+assert.equal(resumePosition(10000, 5000), 0);
+assert.equal(resumePosition(1000, NaN), 0);
+assert.equal(resumePosition(1000, 3000), 1000);
+console.log('PASS: progress retry, rewind, stale acknowledgement and resume boundaries');

@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/components/auth-provider';
 import { AuthDialog } from '@/components/auth-dialog';
 import { ReportButton } from '@/components/report-button';
+import { useWatchHistory } from '@/hooks/use-watch-history';
+import { watchTime } from '@/lib/watch-history';
 import { request } from '@/lib/api';
 import type { ApiEnvelope, Page, Video } from '@/lib/types';
 import {
@@ -15,6 +17,7 @@ export function VideoPlayer({ video }: { video: Video }) {
   const { apiBase, user } = useAuth();
   const media = useRef<HTMLVideoElement>(null),
     frame = useRef<HTMLDivElement>(null);
+  const history = useWatchHistory(media, video.video_id, video.duration_ms);
   const [time, setTime] = useState(0),
     [enabled, setEnabled] = useState(true),
     [lanes, setLanes] = useState(4),
@@ -201,6 +204,13 @@ export function VideoPlayer({ video }: { video: Video }) {
   }
   return (
     <section className="mt-6" aria-label="视频与弹幕">
+      {history.resume > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
+          <span className="text-white/65">上次看到 {watchTime(history.resume)}</span>
+          <button className="text-[#ff8a80] hover:text-white" onClick={history.continueWatching}>继续播放</button>
+          <button className="ml-auto text-white/40 hover:text-white" onClick={history.dismiss}>忽略</button>
+        </div>
+      )}
       <div ref={frame} className="relative overflow-hidden rounded-xl bg-black">
         <video
           ref={media}
@@ -246,6 +256,12 @@ export function VideoPlayer({ video }: { video: Video }) {
           ))}
         </div>
       </div>
+      {history.status && (
+        <output className="mt-3 flex flex-wrap items-center gap-3 text-xs text-amber-200/80">
+          <span>{history.status}</span>
+          <button className="underline" onClick={history.retry}>重新启用保存</button>
+        </output>
+      )}
       {mediaError && (
         <p role="alert" className="mt-3 text-red-300">
           {mediaError}

@@ -12,7 +12,7 @@ import { api } from '@/lib/api';
 import type { Video } from '@/lib/types';
 
 export function VideoDetail({ videoId }: { videoId: string }) {
-  const { apiBase } = useAuth();
+  const { apiBase, user } = useAuth();
   const [result, setResult] = useState<{
     id: string;
     video?: Video;
@@ -62,7 +62,7 @@ export function VideoDetail({ videoId }: { videoId: string }) {
             <h1 className="mt-6 text-2xl font-bold">{video.title}</h1>
             <AuthorCard userId={video.owner_id} />
 
-            <VideoPlayer key={video.video_id} video={video} />
+            <VideoPlayer key={`${apiBase}:${user?.user_id}:${video.video_id}`} video={video} />
 
             <p className="mt-6 whitespace-pre-wrap text-white/70">
               {video.description}
