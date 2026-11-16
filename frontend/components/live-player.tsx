@@ -36,19 +36,7 @@ export function LivePlayer({
       }
     };
     video.addEventListener('canplay', play);
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      const nativeError = () => fail('原生 HLS 加载失败');
-      video.addEventListener('error', nativeError);
-      video.src = src;
-      return () => {
-        disposed = true;
-        video.removeEventListener('canplay', play);
-        video.removeEventListener('error', nativeError);
-        video.pause();
-        video.removeAttribute('src');
-        video.load();
-      };
-    } else if (Hls.isSupported()) {
+    if (Hls.isSupported()) {
       hls = new Hls({
         maxBufferLength: 30,
         backBufferLength: 30,
@@ -100,6 +88,18 @@ export function LivePlayer({
         hls?.destroy();
         fail(data.details);
       });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      const nativeError = () => fail('原生 HLS 加载失败');
+      video.addEventListener('error', nativeError);
+      video.src = src;
+      return () => {
+        disposed = true;
+        video.removeEventListener('canplay', play);
+        video.removeEventListener('error', nativeError);
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+      };
     } else
       queueMicrotask(() => {
         if (!disposed) setError('此浏览器不支持 HLS 播放，请使用新版浏览器。');

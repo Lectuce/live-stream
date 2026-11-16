@@ -24,10 +24,16 @@ func ClaimContentEvent(ctx context.Context) (*model.OutboxEvent, error) {
 	var event model.OutboxEvent
 	err := dao.SC.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now()
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+		result := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
 			Where("(status = 'pending' AND next_retry_at <= ?) OR (status = 'sending' AND locked_until <= ?)", now, now).
-			Order("id ASC").First(&event).Error; err != nil {
-			return err
+			Order("id ASC").Limit(1).Find(&event)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			// An empty outbox is the normal idle state. Returning the sentinel keeps
+			// the dispatcher behavior without making GORM log "record not found".
+			return gorm.ErrRecordNotFound
 		}
 		event.LockToken = uuid.NewString()
 		return tx.Model(&event).Updates(map[string]any{"status": "sending", "lock_token": event.LockToken,

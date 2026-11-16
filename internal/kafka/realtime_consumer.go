@@ -42,15 +42,17 @@ func StartRealtimeConsumer(ctx context.Context) error {
 		MaxBytes:    10e6,
 		// 实时消费者组针对延迟而不是批量大小优化。MaxWait=0 会使用 kafka-go
 		// 默认的 10 秒等待时间，因此这里需要显式设置。
-		MaxWait:          50 * time.Millisecond,
-		ReadBatchTimeout: time.Second,
+		MaxWait: 50 * time.Millisecond,
+		// MaxWait controls low-latency broker responses. ReadBatchTimeout is a
+		// transport deadline; one second is too aggressive during brief broker or
+		// scheduler stalls and makes kafka-go retry an otherwise healthy reader.
+		ReadBatchTimeout: 10 * time.Second,
 		// CommitInterval 非零时，CommitMessages 会变为异步执行。
 		// 所有持久化或可见的副作用仍会在提交进入队列前完成，
 		// 重放则由数据库检查点消化。
 		CommitInterval: batchWait,
-		ErrorLogger: kafkago.LoggerFunc(func(format string, args ...any) {
-			log.Printf("kafka realtime reader: "+format, args...)
-		}),
+		// Internal reader retries are intentionally quiet. FetchMessage still
+		// returns terminal/read errors to the loop below, where they are logged.
 	})
 	defer reader.Close()
 	log.Printf(
