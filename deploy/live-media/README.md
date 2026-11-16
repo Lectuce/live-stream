@@ -27,7 +27,7 @@ docker compose -f deploy/live-media/compose.yaml logs --tail=50 srs
 
 ## 3. Nginx 与前端
 
-把同目录 nginx.conf.example 的 location 加到现有 8081 公网 server 中，保留其他配置：
+把同目录 nginx.conf.example 的两个 location 加到现有 8081 公网 server 中，保留其他配置。第二个规则只匹配 `/live/` 下的 m3u8/ts；不要使用宽泛的 `location /live/`，否则会遮蔽前端直播首页：
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx

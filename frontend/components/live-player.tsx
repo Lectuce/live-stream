@@ -18,9 +18,15 @@ export function LivePlayer({
     if (!video || !src) return;
     let hls: Hls | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let attempts = 0;
+    let networkAttempts = 0;
+    let mediaAttempts = 0;
     let disposed = false;
-    const fail = () => setError('暂时无法播放，主播可能正在连接。请稍后重试。');
+    const fail = (detail = '') =>
+      setError(
+        detail
+          ? `暂时无法播放（${detail}），请重新连接。`
+          : '暂时无法播放，主播可能正在连接。请稍后重试。',
+      );
     const play = () => {
       if (!disposed) {
         setError('');
@@ -30,21 +36,69 @@ export function LivePlayer({
       }
     };
     video.addEventListener('canplay', play);
-    video.addEventListener('error', fail);
-    if (video.canPlayType('application/vnd.apple.mpegurl')) video.src = src;
-    else if (Hls.isSupported()) {
-      hls = new Hls({ maxBufferLength: 15, backBufferLength: 10 });
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      const nativeError = () => fail('原生 HLS 加载失败');
+      video.addEventListener('error', nativeError);
+      video.src = src;
+      return () => {
+        disposed = true;
+        video.removeEventListener('canplay', play);
+        video.removeEventListener('error', nativeError);
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+      };
+    } else if (Hls.isSupported()) {
+      hls = new Hls({
+        maxBufferLength: 30,
+        backBufferLength: 30,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 8,
+        manifestLoadingMaxRetry: 8,
+        levelLoadingMaxRetry: 8,
+        fragLoadingMaxRetry: 8,
+      });
       hls.loadSource(src);
       hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        networkAttempts = 0;
+        setError('');
+        void video.play().catch(() => {
+          /* The controls remain available when autoplay is blocked. */
+        });
+      });
+      hls.on(Hls.Events.FRAG_LOADED, () => {
+        networkAttempts = 0;
+      });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal || disposed) return;
-        if (++attempts <= 3 && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+
+        if (
+          data.type === Hls.ErrorTypes.NETWORK_ERROR &&
+          ++networkAttempts <= 8
+        ) {
           clearTimeout(timer);
-          timer = setTimeout(() => hls?.loadSource(src), attempts * 2000);
-        } else {
-          hls?.destroy();
-          fail();
+          timer = setTimeout(
+            () => {
+              if (disposed) return;
+              // Reloading the source obtains a fresh live playlist after an old
+              // fragment was removed from the server's sliding window.
+              hls?.loadSource(src);
+              hls?.startLoad(-1);
+            },
+            Math.min(networkAttempts * 1000, 5000),
+          );
+          return;
         }
+
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && ++mediaAttempts <= 3) {
+          if (mediaAttempts === 2) hls?.swapAudioCodec();
+          hls?.recoverMediaError();
+          return;
+        }
+
+        hls?.destroy();
+        fail(data.details);
       });
     } else
       queueMicrotask(() => {
@@ -55,7 +109,6 @@ export function LivePlayer({
       clearTimeout(timer);
       hls?.destroy();
       video.removeEventListener('canplay', play);
-      video.removeEventListener('error', fail);
       video.pause();
       video.removeAttribute('src');
       video.load();
