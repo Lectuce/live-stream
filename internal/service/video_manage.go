@@ -19,10 +19,17 @@ func editVideoMetadata(video *model.Video, req model.UpdateVideoRequest, autoApp
 	if video.PublishStatus != "draft" {
 		return ErrVideoPublished
 	}
-	if req.Title == nil && req.Description == nil {
+	if req.Title == nil && req.Description == nil && req.Category == nil {
 		return ErrVideoParams
 	}
 	title, description := video.Title, video.Description
+	category := video.Category
+	if req.Category != nil {
+		category = *req.Category
+		if !model.ValidVideoCategory(category) {
+			return ErrVideoParams
+		}
+	}
 	if req.Title != nil {
 		title = strings.TrimSpace(*req.Title)
 	}
@@ -32,10 +39,11 @@ func editVideoMetadata(video *model.Video, req model.UpdateVideoRequest, autoApp
 	if title == "" || utf8.RuneCountInString(title) > 100 || utf8.RuneCountInString(description) > 5000 {
 		return ErrVideoParams
 	}
-	if title == video.Title && description == video.Description {
+	if title == video.Title && description == video.Description && category == video.Category {
 		return nil
 	}
 	video.Title, video.Description = title, description
+	video.Category = category
 	video.ContentVersion++
 	video.AuditReason = ""
 	if video.ProcessStatus == "ready" && video.MediaFile != "" {

@@ -12,6 +12,9 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 	r.Use(middleware.CORS())
 
 	apiV1Group := r.Group("/api/v1")
+	apiV1Group.GET("/feeds/videos", handler.VideoDiscovery)
+	apiV1Group.GET("/video-categories", handler.VideoCategories)
+	apiV1Group.GET("/search", handler.SearchDiscovery)
 	{
 		// 游客可看弹幕
 		apiV1Group.GET("/ws", func(c *gin.Context) {
@@ -154,6 +157,9 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 			videos.PUT("/:video_id/like", middleware.Auth, middleware.CommunityLimit("interaction"), handler.VideoLike)
 			videos.DELETE("/:video_id/like", middleware.Auth, middleware.CommunityLimit("interaction"), handler.VideoLike)
 			videos.GET("/:video_id", handler.GetVideo)
+			videos.POST("/:video_id/behavior", middleware.Auth, middleware.CommunityLimit("video_behavior"), handler.VideoBehavior)
+			videos.POST("/:video_id/play-sessions", middleware.Auth, middleware.CommunityLimit("video_play"), handler.VideoPlaySession)
+			videos.PUT("/:video_id/play-sessions", middleware.Auth, middleware.CommunityLimit("video_play"), handler.VideoPlaySession)
 			videos.GET("/:video_id/danmakus", handler.VideoDanmakus)
 			videos.POST("/:video_id/danmakus", middleware.Auth, middleware.CommunityLimit("danmaku"), handler.VideoDanmakus)
 			videos.DELETE("/:video_id/danmakus/:danmaku_id", middleware.Auth, middleware.CommunityLimit("danmaku"), handler.DeleteVideoDanmaku)

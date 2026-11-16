@@ -16,10 +16,11 @@ const DanmuChannel = "live:danmu:broadcast"
 func InitRedis() {
 	cfg := config.GlobalConfig
 	Rdb := redis.NewClient(&redis.Options{
-		Addr:     cfg.Redis.Addr,
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-		Username: cfg.Redis.Username,
+		ContextTimeoutEnabled: true,
+		Addr:                  cfg.Redis.Addr,
+		Password:              cfg.Redis.Password,
+		DB:                    cfg.Redis.DB,
+		Username:              cfg.Redis.Username,
 	})
 	err := Rdb.Ping(context.Background()).Err()
 	if err != nil {

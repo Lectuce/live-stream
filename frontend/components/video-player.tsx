@@ -4,6 +4,7 @@ import { useAuth } from '@/components/auth-provider';
 import { AuthDialog } from '@/components/auth-dialog';
 import { ReportButton } from '@/components/report-button';
 import { useWatchHistory } from '@/hooks/use-watch-history';
+import { useVideoPlayBehavior } from '@/hooks/use-video-play-behavior';
 import { watchTime } from '@/lib/watch-history';
 import { request } from '@/lib/api';
 import type { ApiEnvelope, Page, Video } from '@/lib/types';
@@ -18,6 +19,7 @@ export function VideoPlayer({ video }: { video: Video }) {
   const media = useRef<HTMLVideoElement>(null),
     frame = useRef<HTMLDivElement>(null);
   const history = useWatchHistory(media, video.video_id, video.duration_ms);
+  useVideoPlayBehavior(media, video.video_id, video.duration_ms);
   const [time, setTime] = useState(0),
     [enabled, setEnabled] = useState(true),
     [lanes, setLanes] = useState(4),

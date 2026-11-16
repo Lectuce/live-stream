@@ -17,11 +17,12 @@ export function AppHeader() {
     <>
       <header className="glass sticky top-0 z-40 border-b border-white/8">
         <div className="mx-auto flex h-16 max-w-[1480px] items-center justify-between px-4 sm:px-6 lg:px-8">
-          <Link href="/" className="flex items-center gap-3" aria-label="返回直播首页">
+          <Link href="/" className="flex items-center gap-3" aria-label="返回视频首页">
             <span className="grid size-9 place-items-center rounded-xl bg-[#ff4d3d] shadow-[0_0_25px_rgb(255_77_61/28%)]"><Radio className="size-5" /></span>
             <span className="hidden sm:block"><span className="block text-sm font-black tracking-[.16em]">LIVE NOW</span><span className="text-[10px] tracking-[.18em] text-white/35">REALTIME STAGE</span></span>
           </Link>
-          <nav className="flex items-center gap-1 sm:gap-2">
+          <nav className="flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap sm:gap-2">
+            <Link href="/live" className="px-2 text-xs text-white/65">直播</Link>
             <Link href="/me/history" className="px-2 text-xs text-white/65">历史</Link>
             <Link href="/me/favorites" className="px-2 text-xs text-white/65">收藏</Link><NotificationLink/>
             <Link href="/studio" className="hidden h-9 items-center rounded-md px-2 text-xs font-semibold text-white/65 hover:text-white sm:inline-flex">创作中心</Link>

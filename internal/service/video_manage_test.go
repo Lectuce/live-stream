@@ -53,3 +53,19 @@ func TestEditVideoMetadataTransitions(t *testing.T) {
 		})
 	}
 }
+
+func TestVideoCategoryEditRequiresReviewAndRejectsUnknown(t *testing.T) {
+	category := "games"
+	v := model.Video{Category: "general", Title: "old", PublishStatus: "draft", ProcessStatus: "ready", PlayURL: "/media", AuditStatus: "approved", ContentVersion: 3}
+	if err := editVideoMetadata(&v, model.UpdateVideoRequest{Category: &category}, false); err != nil {
+		t.Fatal(err)
+	}
+	if v.Category != "games" || v.AuditStatus != "pending" || v.ContentVersion != 4 {
+		t.Fatal(v)
+	}
+	category = "not-a-category"
+	before := v
+	if err := editVideoMetadata(&v, model.UpdateVideoRequest{Category: &category}, false); !errors.Is(err, ErrVideoParams) || v != before {
+		t.Fatal(v, err)
+	}
+}

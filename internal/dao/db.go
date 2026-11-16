@@ -63,6 +63,9 @@ func Initdb() {
 	if err := db.AutoMigrate(&model.Video{}, &model.VideoDanmaku{}); err != nil {
 		panic(fmt.Errorf("Database table video migration failed: %v", err))
 	}
+	if err := db.AutoMigrate(&model.VideoBehavior{}, &model.VideoMetric{}, &model.VideoPlaySession{}); err != nil {
+		panic(fmt.Errorf("Database video discovery migration failed: %w", err))
+	}
 	if err := db.AutoMigrate(&model.WatchHistory{}, &model.WatchHistoryState{}); err != nil {
 		panic(fmt.Errorf("Database watch history migration failed: %w", err))
 	}

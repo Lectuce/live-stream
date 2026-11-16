@@ -93,7 +93,7 @@ export function LiveRoom({ roomId }: { roomId: number }) {
   }
 
   if (loading) return <><AppHeader /><main className="mx-auto max-w-[1480px] p-4 sm:p-6 lg:p-8"><Skeleton className="aspect-video w-full rounded-xl bg-white/5" /></main></>;
-  if (pageError && !room) return <><AppHeader /><main className="grid min-h-[70vh] place-items-center p-6 text-center"><div><Radio className="mx-auto mb-4 size-10 text-white/20" /><h1 className="text-xl font-bold">无法打开直播间</h1><p className="mt-2 text-sm text-red-300">{pageError}</p><Link href="/"><Button variant="outline" className="mt-5"><ArrowLeft />返回首页</Button></Link></div></main></>;
+  if (pageError && !room) return <><AppHeader /><main className="grid min-h-[70vh] place-items-center p-6 text-center"><div><Radio className="mx-auto mb-4 size-10 text-white/20" /><h1 className="text-xl font-bold">无法打开直播间</h1><p className="mt-2 text-sm text-red-300">{pageError}</p><Link href="/live"><Button variant="outline" className="mt-5"><ArrowLeft />返回首页</Button></Link></div></main></>;
   if (!room) return null;
 
   const isOwner = user?.user_id === room.owner_id;
@@ -102,7 +102,7 @@ export function LiveRoom({ roomId }: { roomId: number }) {
     <div className="min-h-screen bg-[#080a0f]">
       <AppHeader />
       <main className="mx-auto max-w-[1540px] px-3 pb-10 pt-4 sm:px-6 lg:px-8">
-        <div className="mb-4 flex items-center justify-between gap-3"><Link href="/" className="flex items-center gap-2 text-sm text-white/45 transition hover:text-white"><ArrowLeft className="size-4" />全部直播</Link><div className="flex items-center gap-2"><Badge variant="outline" className="border-white/10 bg-white/4 text-white/55">房间 #{roomId}</Badge>{isOwner && room.status === 1 && <Button variant="destructive" size="sm" onClick={() => void stopRoom()} disabled={stopping}>{stopping ? <LoaderCircle className="animate-spin" /> : <CircleStop />}结束直播</Button>}</div></div>
+        <div className="mb-4 flex items-center justify-between gap-3"><Link href="/live" className="flex items-center gap-2 text-sm text-white/45 transition hover:text-white"><ArrowLeft className="size-4" />全部直播</Link><div className="flex items-center gap-2"><Badge variant="outline" className="border-white/10 bg-white/4 text-white/55">房间 #{roomId}</Badge>{isOwner && room.status === 1 && <Button variant="destructive" size="sm" onClick={() => void stopRoom()} disabled={stopping}>{stopping ? <LoaderCircle className="animate-spin" /> : <CircleStop />}结束直播</Button>}</div></div>
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
           <section className="min-w-0">
             <div className="relative aspect-video overflow-hidden rounded-xl border border-white/9 bg-black shadow-[0_30px_80px_rgb(0_0_0/35%)]">

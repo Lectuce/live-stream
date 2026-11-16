@@ -89,6 +89,7 @@ export interface LiveFeedPage {
 }
 
 export interface Video {
+  category: string;
   content_version: string;
   submitted_at: string | null;
   video_id: string;

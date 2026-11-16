@@ -26,12 +26,19 @@ func CreateVideo(
 	req model.CreateVideoRequest,
 ) (*model.Video, error) {
 	title := strings.TrimSpace(req.Title)
+	if req.Category == "" {
+		req.Category = "general"
+	}
+	if !model.ValidVideoCategory(req.Category) {
+		return nil, ErrVideoParams
+	}
 	if title == "" {
 		return nil, ErrVideoTitle
 	}
 
 	video := &model.Video{
 		OwnerID:       ownerID,
+		Category:      req.Category,
 		Title:         title,
 		Description:   strings.TrimSpace(req.Description),
 		ProcessStatus: "pending",

@@ -25,7 +25,8 @@ func MutateOwnerVideo(ctx context.Context, id, ownerID uint64, mutate func(*mode
 			return err
 		}
 		return tx.Model(&video).Updates(map[string]any{
-			"title": video.Title, "description": video.Description, "audit_status": video.AuditStatus,
+			"category": video.Category,
+			"title":    video.Title, "description": video.Description, "audit_status": video.AuditStatus,
 			"publish_status": video.PublishStatus, "published_at": video.PublishedAt,
 			"content_version": video.ContentVersion, "audit_reason": video.AuditReason, "submitted_at": video.SubmittedAt,
 		}).Error

@@ -90,9 +90,9 @@ export const api = {
     request<{ message: string }>(base, `/api/v1/admin/videos/${encodeURIComponent(id)}/review`, {
       method: 'POST', body: JSON.stringify({ content_version: version, decision, reason }),
     }),
-  editVideo: (base: string, id: string, title: string, description: string) =>
+  editVideo: (base: string, id: string, title: string, description: string, category?: string) =>
     request<ApiEnvelope<OwnerVideo>>(base, `/api/v1/videos/${encodeURIComponent(id)}`, {
-      method: 'PATCH', body: JSON.stringify({ title, description }),
+      method: 'PATCH', body: JSON.stringify({ title, description, category }),
     }),
   unpublishVideo: (base: string, id: string) =>
     request<ApiEnvelope<OwnerVideo>>(base, `/api/v1/videos/${encodeURIComponent(id)}/unpublish`, {
@@ -111,9 +111,9 @@ export const api = {
     request<ApiEnvelope<OwnerVideo>>(base, `/api/v1/videos/mine/${encodeURIComponent(id)}`, {
       signal, cache: 'no-store',
     }),
-  createVideo: (base: string, title: string, description: string) =>
+  createVideo: (base: string, title: string, description: string, category = 'general') =>
     request<ApiEnvelope<Video>>(base, '/api/v1/videos', {
-      method: 'POST', body: JSON.stringify({ title, description }),
+      method: 'POST', body: JSON.stringify({ title, description, category }),
     }),
   uploadVideo: (base: string, id: string, file: File, signal?: AbortSignal) => {
     const body = new FormData();
