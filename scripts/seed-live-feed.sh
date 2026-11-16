@@ -16,8 +16,8 @@ Usage:
   ./scripts/seed-live-feed.sh [--base-url URL] [--count NUMBER] [--state-dir DIR]
   ./scripts/seed-live-feed.sh --stop-state DIR [--base-url URL]
 
-Create and start test rooms for live Feed pagination, or stop rooms created by a
-previous run.
+Create test rooms and prepare push credentials, or stop rooms from a previous run.
+L6 requires real RTMP publishers before these rooms appear in the live Feed.
 
 Options:
   --base-url URL     Backend address. Default: http://127.0.0.1:9000
@@ -199,7 +199,7 @@ chmod 600 "$MANIFEST"
 
 SAFE_STAMP=${STAMP//-/}
 
-echo "Creating and starting $COUNT test room(s) against $BASE_URL"
+echo "Creating and preparing $COUNT test room(s) against $BASE_URL"
 echo "State directory: $STATE_DIR"
 
 for index in $(seq 1 "$COUNT"); do
@@ -231,10 +231,12 @@ for index in $(seq 1 "$COUNT"); do
   api_request POST "$BASE_URL/api/v1/rooms/$room_id/start" \
     "{\"room_title\":\"$room_title\"}" "$cookie_jar"
   expect_status 200 "Start room $room_id"
+  printf '%s\n' "$API_BODY" >"$STATE_DIR/session-$room_id.json"
+  chmod 600 "$STATE_DIR/session-$room_id.json"
 
   printf '%s\t%s\t%s\t%s\t%s\n' \
     "$index" "$username" "$email" "$room_id" "$cookie_jar" >>"$MANIFEST"
-  printf '[%02d/%02d] started room_id=%s title=%s\n' \
+  printf '[%02d/%02d] prepared room_id=%s title=%s\n' \
     "$index" "$COUNT" "$room_id" "$room_title"
 done
 
@@ -248,14 +250,15 @@ print(len(body.get("data", {}).get("items", [])))
 
 cat <<EOF
 
-Created and started $COUNT test rooms.
+Created and prepared $COUNT test rooms. Push credentials are in session-ROOM_ID.json.
+Connect real RTMP publishers within 15 minutes to make the rooms live.
 The first Feed request currently returns $FEED_ITEMS item(s).
 
 Manifest:
   $MANIFEST
 
-Open the Feed page and verify that scrolling past the first 20 rooms loads the
-next page without duplicates.
+Once more than 20 rooms actually publish, open the Feed and verify pagination.
+On a small server, use scripts/test-l6-live-media.py for a single-room media test.
 
 Stop all rooms from this run with:
   ./scripts/seed-live-feed.sh --base-url "$BASE_URL" --stop-state "$STATE_DIR"

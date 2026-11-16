@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowUpRight, Heart, MessageCircle, Radio, Signal, Users } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { Room } from '@/lib/types';
 import { useLiveRoom } from '@/hooks/use-live-room';
+import { LivePlayer } from '@/components/live-player';
+import { FollowButton } from '@/components/follow-button';
 
 const backgrounds = [
   'from-[#35202b] via-[#1c1725] to-[#0c111b]',
@@ -32,6 +34,7 @@ export function LiveFeedItem({
   apiBase,
   onRoomEnded,
 }: Props) {
+  const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
   const {
     messages,
     appendMessages,
@@ -53,9 +56,11 @@ export function LiveFeedItem({
 
     const controller = new AbortController();
 
-    void api
+    const check = () => { void api
       .roomDetail(apiBase, room.room_id, controller.signal)
       .then((result) => {
+        if (controller.signal.aborted) return;
+        setCurrentRoom(result.data);
         if (result.data.status === 0) {
           onRoomEnded(room.room_id);
         }
@@ -66,10 +71,13 @@ export function LiveFeedItem({
         }
 
         console.error('检查直播间状态失败', error);
-      });
+      }); };
+    check();
+    const timer = setInterval(check, 5000);
 
     return () => {
       controller.abort();
+      clearInterval(timer);
     };
   }, [active, apiBase, onRoomEnded, room.room_id]);
 
@@ -118,14 +126,12 @@ export function LiveFeedItem({
               <span className="inline-flex items-center gap-2 rounded-full border border-[#ff6255]/25 bg-[#ff6255]/10 px-3 py-1.5 text-[11px] font-semibold text-[#ff9a91]"><span className="live-dot size-1.5 rounded-full bg-[#ff6255]" /> 互动房间</span>
               <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5 font-mono text-[11px] text-white/55">#{room.room_id}</span>
             </div>
-            <div className="relative my-4 flex min-h-0 flex-1 flex-col items-center justify-center text-center">
-              <div className="mb-5 grid size-20 place-items-center rounded-[1.7rem] border border-white/10 bg-white/[.04] text-[#ff8b7e] shadow-[0_0_70px_rgb(255_77_61/12%)] sm:size-24"><Radio className="size-9 sm:size-11" /></div>
-              <p className="text-xl font-bold tracking-tight sm:text-3xl">这里正在发生实时互动</p>
-              <p className="mt-2 max-w-md text-xs leading-6 text-white/45 sm:text-sm">当前尚未接入直播视频信号。进入房间即可查看完整弹幕并参与互动。</p>
+            <div className="relative my-4 min-h-0 flex-1 overflow-hidden rounded-xl bg-black">
+              {active && (currentRoom || room).play_url ? <LivePlayer key={(currentRoom || room).play_url} src={(currentRoom || room).play_url!} muted /> : <div className="grid size-full place-content-center text-sm text-white/50">{active ? '等待直播画面' : '滑动到此处播放'}</div>}
             </div>
             <div className="relative flex shrink-0 flex-col gap-4 border-t border-white/10 pt-4 sm:flex-row sm:items-end sm:justify-between">
               <div className="min-w-0">
-                <p className="text-xs text-white/45">{room.owner_username || `主播 #${room.owner_id}`}</p>
+                <div className="flex items-center gap-3"><Link href={`/space/${room.owner_id}`} className="text-xs text-white/45">{room.owner_username || `主播 #${room.owner_id}`}</Link>{active && <FollowButton userId={String(room.owner_id)} />}</div>
                 <h1 className="mt-1 line-clamp-2 text-xl font-bold tracking-tight sm:text-3xl">{room.room_title}</h1>
                 <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-white/55">
                   <span className="inline-flex items-center gap-1.5"><Users className="size-3.5" /> {connection === 'open' ? onlineCount.toLocaleString() : '—'} 在线</span>

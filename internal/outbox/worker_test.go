@@ -38,3 +38,11 @@ func TestEventValidation(t *testing.T) {
 		t.Fatal("unbounded payload")
 	}
 }
+
+func TestLiveStartedEventAccepted(t *testing.T) {
+	event := model.ContentEvent{EventID: uuid.NewString(), BusinessKey: "live.started:42", EventType: "live.started", ActorID: 7, TargetID: 42, PublishedAt: time.Now().UTC().Truncate(time.Microsecond)}
+	data, _ := json.Marshal(event)
+	if _, err := DecodeEvent(data); err != nil {
+		t.Fatal(err)
+	}
+}

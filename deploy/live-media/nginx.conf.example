@@ -1,0 +1,8 @@
+# Add inside the existing public server block, alongside /api and frontend proxy.
+# Do not expose ports 1985 or 9001, or add a public /hooks proxy.
+location /live-media/ {
+    proxy_pass http://127.0.0.1:8080/live/;
+    proxy_buffering off;
+    proxy_cache off;
+    add_header Cache-Control "no-store" always;
+}

@@ -160,6 +160,7 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
       const current = wsRef.current;
       if (current && (current.readyState === WebSocket.CONNECTING || current.readyState === WebSocket.OPEN)) return;
       setConnection('connecting');
+      setRoomStatus(null);
       // Cloudflare 开发插件和 Vite 的 /api 代理都会监听 HTTP 升级请求。
       // 此应用子协议会让 Cloudflare 将套接字交给 Vite 代理，
       // 而不是破坏已代理的数据流。
@@ -202,10 +203,11 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
             } else if (subtype === 'delivery_policy') {
               setDeliveryMode(message.data?.delivery_mode === 'sampled' ? 'sampled' : 'push');
             } else if (subtype === 'room_status') {
-              const nextStatus = Number(message.data?.status);
-              if (nextStatus === 0 || nextStatus === 1) {
-                setRoomStatus(nextStatus);
-              }
+              // A delayed end notification may belong to a previous session.
+              // Read the current room before applying it to this connection.
+              void api.roomDetail(apiBase, roomId).then(({data}) => {
+                if (!disposed && wsRef.current === ws) setRoomStatus(data.status);
+              }).catch(() => {});
             }
           } else if (message.type === 'resync_required') {
             void recoverRef.current(Number(message.after_seq || lastSeqRef.current));

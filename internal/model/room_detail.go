@@ -3,6 +3,7 @@ package model
 import "time"
 
 type RoomDetail struct {
+	LiveSessionID uint64     `json:"live_session_id,string"`
 	RoomID        uint64     `json:"room_id" gorm:"primaryKey;autoIncrement"`
 	RoomTitle     string     `json:"room_title" mapstructure:"room_title"`
 	Status        int        `json:"status" mapstructure:"status"`

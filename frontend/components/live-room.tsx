@@ -14,6 +14,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/components/auth-provider';
 import { useLiveRoom } from '@/hooks/use-live-room';
 import { ReportButton } from '@/components/report-button';
+import { LivePlayer } from '@/components/live-player';
+import { FollowButton } from '@/components/follow-button';
 import { api } from '@/lib/api';
 import type { DanmakuMessage, Room } from '@/lib/types';
 
@@ -55,6 +57,11 @@ export function LiveRoom({ roomId }: { roomId: number }) {
   }, [apiBase, appendMessages, roomId]);
 
   useEffect(() => { queueMicrotask(() => void loadRoom()); }, [loadRoom]);
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = setInterval(() => { void api.roomDetail(apiBase, roomId, controller.signal).then(({data}) => { if (!controller.signal.aborted) setRoom(data); }).catch(() => {}); }, 5000);
+    return () => { clearInterval(timer); controller.abort(); };
+  }, [apiBase, roomId]);
   useEffect(() => { if (room?.status === 1) queueMicrotask(() => void loadHistory(false)); }, [loadHistory, room?.status]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages.length]);
   useEffect(() => {
@@ -106,12 +113,12 @@ export function LiveRoom({ roomId }: { roomId: number }) {
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
           <section className="min-w-0">
             <div className="relative aspect-video overflow-hidden rounded-xl border border-white/9 bg-black shadow-[0_30px_80px_rgb(0_0_0/35%)]">
-              {room.status === 1 ? <>{room.play_url && !room.play_url.includes('live.example.com') ? <video className="size-full object-contain" src={room.play_url} controls autoPlay playsInline><track kind="captions" srcLang="zh" label="暂无字幕" src="data:text/vtt,WEBVTT" /></video> : <div className="absolute inset-0 grid place-items-center bg-[#090b10]"><div className="text-center"><div className="mx-auto grid size-20 place-items-center rounded-full border border-white/8 bg-white/[.025]"><Radio className="size-8 text-[#ff6255]" /></div><p className="mt-5 font-semibold">主播暂未开启画面</p><p className="mt-2 text-xs text-white/30">可以先在弹幕区和大家聊聊</p></div></div>}<div className="pointer-events-none absolute inset-0 overflow-hidden" aria-label="弹幕层">{overlayMessages.map((message, index) => <div key={message.message_id} className="danmaku-fly absolute right-0 max-w-[70%] whitespace-nowrap rounded-full bg-black/45 px-3 py-1.5 text-sm font-medium text-white shadow backdrop-blur-sm" style={{ top: `${8 + (index % 7) * 11}%`, animationDuration: `${8 + (index % 5)}s` }}>{message.content}</div>)}</div></> : <div className="absolute inset-0 grid place-items-center"><div className="text-center"><CircleStop className="mx-auto size-10 text-white/20" /><h2 className="mt-4 text-xl font-bold">直播已经结束</h2><p className="mt-2 text-sm text-white/35">历史弹幕仍可在右侧查看</p></div></div>}
+              {room.status === 1 ? <>{room.play_url && !room.play_url.includes('live.example.com') ? <LivePlayer key={room.play_url} src={room.play_url} /> : <div className="absolute inset-0 grid place-items-center bg-[#090b10]"><div className="text-center"><div className="mx-auto grid size-20 place-items-center rounded-full border border-white/8 bg-white/[.025]"><Radio className="size-8 text-[#ff6255]" /></div><p className="mt-5 font-semibold">主播暂未开启画面</p><p className="mt-2 text-xs text-white/30">可以先在弹幕区和大家聊聊</p></div></div>}<div className="pointer-events-none absolute inset-0 overflow-hidden" aria-label="弹幕层">{overlayMessages.map((message, index) => <div key={message.message_id} className="danmaku-fly absolute right-0 max-w-[70%] whitespace-nowrap rounded-full bg-black/45 px-3 py-1.5 text-sm font-medium text-white shadow backdrop-blur-sm" style={{ top: `${8 + (index % 7) * 11}%`, animationDuration: `${8 + (index % 5)}s` }}>{message.content}</div>)}</div></> : <div className="absolute inset-0 grid place-items-center"><div className="text-center"><CircleStop className="mx-auto size-10 text-white/20" /><h2 className="mt-4 text-xl font-bold">直播已经结束</h2><p className="mt-2 text-sm text-white/35">历史弹幕仍可在右侧查看</p></div></div>}
               <div className="absolute left-3 top-3 flex items-center gap-2"><span className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-bold ${room.status === 1 ? 'bg-[#ff4d3d]' : 'bg-white/10'}`}><span className={`size-1.5 rounded-full bg-white ${room.status === 1 ? 'live-dot' : ''}`} />{room.status === 1 ? '直播中' : '已结束'}</span>{room.status === 1 && <span className="rounded-md bg-black/50 px-2 py-1 text-[10px] text-white/75 backdrop-blur">弹幕互动中</span>}</div>
             </div>
             <div className="mt-4 flex flex-col gap-4 rounded-xl border border-white/8 bg-[#0e1117] p-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-center gap-3"><Avatar size="lg"><AvatarFallback className="bg-[#ff4d3d]/10 text-[#ff6b5e]">{(room.owner_username || 'L').slice(0, 1)}</AvatarFallback></Avatar><div className="min-w-0"><h1 className="truncate text-xl font-bold tracking-tight sm:text-2xl">{room.room_title}</h1><p className="mt-1 text-sm text-white/38">{room.owner_username || `主播 #${room.owner_id}`}{room.start_at && ` · ${new Date(room.start_at).toLocaleString('zh-CN')}`}</p></div></div>
-              <div className="flex items-center gap-2"><div className="flex items-center gap-4 pr-2 text-sm text-white/45"><span className="flex items-center gap-1.5"><Users className="size-4" />{onlineCount}</span><span className="flex items-center gap-1.5"><Heart className={likeSendState === 'accepted' ? 'size-4 fill-[#ff6255] text-[#ff6255]' : 'size-4'} />{likeCount}</span></div><Button type="button" variant="outline" disabled={room.status !== 1 || connection !== 'open'} onClick={like} className="min-w-24 border-white/10 bg-white/4 hover:border-[#ff4d3d]/30 hover:text-[#ff6b5e]"><Heart className={likeSendState === 'accepted' ? 'fill-[#ff6255] text-[#ff6255]' : ''} />{likeSendState === 'accepted' ? '已点赞' : likeSendState === 'error' ? '重试' : '点赞'}</Button></div>
+              <div className="flex flex-wrap items-center gap-2">{!isOwner && <FollowButton userId={String(room.owner_id)} />}<div className="flex items-center gap-4 pr-2 text-sm text-white/45"><span className="flex items-center gap-1.5"><Users className="size-4" />{onlineCount}</span><span className="flex items-center gap-1.5"><Heart className={likeSendState === 'accepted' ? 'size-4 fill-[#ff6255] text-[#ff6255]' : 'size-4'} />{likeCount}</span></div><Button type="button" variant="outline" disabled={room.status !== 1 || connection !== 'open'} onClick={like} className="min-w-24 border-white/10 bg-white/4 hover:border-[#ff4d3d]/30 hover:text-[#ff6b5e]"><Heart className={likeSendState === 'accepted' ? 'fill-[#ff6255] text-[#ff6255]' : ''} />{likeSendState === 'accepted' ? '已点赞' : likeSendState === 'error' ? '重试' : '点赞'}</Button></div>
             </div>
             {(pageError || error) && <div className="mt-4 rounded-lg border border-red-400/15 bg-red-400/5 px-4 py-3 text-sm text-red-300">{pageError || error}</div>}
           </section>

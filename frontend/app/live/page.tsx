@@ -6,6 +6,7 @@ import { ArrowRight, Flame, Radio, RefreshCw, Search, Sparkles, Users } from 'lu
 import { AppHeader } from '@/components/app-header';
 import { RoomCard } from '@/components/room-card';
 import { RoomStudio } from '@/components/room-studio';
+import { FollowingLive } from '@/components/following-live';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,7 +16,7 @@ import { useAuth } from '@/components/auth-provider';
 import type { LucideIcon } from 'lucide-react';
 
 export default function Home() {
-  const { apiBase } = useAuth();
+  const { apiBase, user } = useAuth();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -50,7 +51,8 @@ export default function Home() {
           </div>
           <div aria-hidden className="absolute -right-20 -top-24 size-80 rounded-full border border-[#ff4d3d]/15 shadow-[0_0_100px_rgb(255_77_61/8%)]" />
         </section>
-        <section id="studio" className="mt-8"><RoomStudio onChanged={load} /></section>
+        <section id="studio" className="mt-8"><RoomStudio key={user?.user_id ?? 'guest'} onChanged={load} /></section>
+        <FollowingLive />
         <section id="live-rooms" className="mt-14 scroll-mt-24">
           <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div><div className="mb-2 flex items-center gap-2 text-xs font-semibold tracking-[.14em] text-[#ff6558]"><Flame className="size-4" /> ON AIR</div><h2 className="text-2xl font-bold tracking-tight sm:text-3xl">正在直播</h2><p className="mt-2 text-sm text-white/40">按热度排列的公开直播间</p></div>

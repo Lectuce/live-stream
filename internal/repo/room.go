@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"live-stream/internal/dao"
 	"live-stream/internal/model"
-	"time"
 
 	"gorm.io/gorm"
 )
@@ -51,19 +50,6 @@ func UpdateRoom(ctx context.Context, roomID uint64, roomTitle string) error {
 	} else {
 		return fmt.Errorf("no record found, RoomID: %v, name: %v", roomID, roomTitle)
 	}
-}
-
-func UpdateRoomStatus(ctx context.Context, roomID uint64, targetStatus int) error {
-	rowsAffected, err := gorm.G[model.Room](dao.SC.Db).
-		Where("room_id = ?", roomID).
-		Update(ctx, "status", targetStatus)
-	if err != nil {
-		return fmt.Errorf("fatal error update room status: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("no record found, roomID: %d", roomID)
-	}
-	return nil
 }
 
 func SelectRooms(ctx context.Context, room *model.Room) ([]model.Room, error) {
@@ -187,7 +173,7 @@ func orderRoomsByHotRanking(
 
 func selectNewestActiveRooms(ctx context.Context, limit int) ([]model.HotRoomDTO, error) {
 	sql := `
-		SELECT room.room_id, room.room_title, room.owner_id, u.user_name as owner_username, room.like_count
+		SELECT room.room_id, room.room_title, room.owner_id, u.user_name as owner_username, room.like_count, room.play_url
 		FROM rooms room
 		LEFT JOIN users u ON  u.user_id= room.owner_id
 		WHERE room.status = ?
@@ -198,7 +184,6 @@ func selectNewestActiveRooms(ctx context.Context, limit int) ([]model.HotRoomDTO
 	if err != nil {
 		return nil, err
 	}
-	populateRoomPlayURLs(list)
 	return list, nil
 }
 
@@ -207,7 +192,7 @@ func SelectActiveRoomDTOsByIDs(ctx context.Context, roomIDs []uint64) ([]model.H
 		return nil, nil
 	}
 	sql := `
-		SELECT room.room_id, room.room_title, room.owner_id, u.user_name as owner_username, room.like_count
+		SELECT room.room_id, room.room_title, room.owner_id, u.user_name as owner_username, room.like_count, room.play_url
 		FROM rooms room
 		LEFT JOIN users u ON u.user_id = room.owner_id
 		WHERE room.status = ? AND room.room_id IN ?
@@ -216,19 +201,11 @@ func SelectActiveRoomDTOsByIDs(ctx context.Context, roomIDs []uint64) ([]model.H
 	if err != nil {
 		return nil, err
 	}
-	populateRoomPlayURLs(list)
 	return list, nil
 }
 
-func populateRoomPlayURLs(list []model.HotRoomDTO) {
-	const playDomain = "https://live.example.com/live"
-	for i := range list {
-		list[i].PlayURL = fmt.Sprintf("%s/%d.m3u8", playDomain, list[i].RoomID)
-	}
-}
-
 func SelectRoomDetail(ctx context.Context, roomID uint64) (model.RoomDetail, error) {
-	sql := `SELECT room.room_id, room.room_title, room.owner_id, room.start_at, room.status, u.user_name as owner_username, room.like_count
+	sql := `SELECT room.room_id, room.room_title, room.owner_id, room.start_at, room.status, u.user_name as owner_username, room.like_count, room.play_url, room.live_session_id
 			FROM rooms room
 			LEFT JOIN users u ON  u.user_id= room.owner_id
 			WHERE room.room_id = ?
@@ -237,28 +214,5 @@ func SelectRoomDetail(ctx context.Context, roomID uint64) (model.RoomDetail, err
 	if err != nil {
 		return model.RoomDetail{}, err
 	}
-	const playDomain = "https://live.example.com/live"
-	detail.PlayURL = fmt.Sprintf("%s/%d.m3u8", playDomain, roomID)
 	return detail, nil
-}
-
-func StartLive(ctx context.Context, roomID uint64, title string) error {
-	now := time.Now()
-	room := model.Room{
-		Status:    1,
-		RoomTitle: title,
-		StartAt:   &now,
-	}
-	rowsAffected, err := gorm.G[model.Room](dao.SC.Db).Where("room_id = ?", roomID).Updates(ctx, room)
-	if err != nil {
-		return fmt.Errorf("start live update failed: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("room not found")
-	}
-	return nil
-}
-
-func StopLive(ctx context.Context, roomID uint64) error {
-	return UpdateRoomStatus(ctx, roomID, 0)
 }

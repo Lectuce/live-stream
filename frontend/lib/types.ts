@@ -20,7 +20,8 @@ export interface Post {
 }
 export interface PostPage { items: Post[]; next_cursor: string; has_more: boolean; }
 export interface FollowingFeedItem {
-  event_id: string; type: 'video.published' | 'post.published'; published_at: string;
+  event_id: string; type: 'video.published' | 'post.published' | 'live.started'; published_at: string;
+  live?: { session_id: string; room_id: number; title: string; status: 'live' | 'ended' };
   author: { user_id: string; user_name: string; avatar_url: string };
   video?: { video_id: string; title: string; cover_url: string; duration_ms: number };
   post?: Post;
@@ -49,6 +50,7 @@ export interface User {
 }
 
 export interface Room {
+  live_session_id?: string;
   room_id: number;
   room_title: string;
   status: number;

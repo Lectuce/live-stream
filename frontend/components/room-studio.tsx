@@ -13,6 +13,8 @@ import type { Room } from '@/lib/types';
 export function RoomStudio({ onChanged }: { onChanged: () => void | Promise<void> }) {
   const { user, apiBase, loading: authLoading } = useAuth();
   const [room, setRoom] = useState<Room | null>(null);
+  const [credentials, setCredentials] = useState<{server:string;stream_key:string;expires_at:string} | null>(null);
+  const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
@@ -26,6 +28,12 @@ export function RoomStudio({ onChanged }: { onChanged: () => void | Promise<void
     finally { setLoading(false); }
   }, [apiBase, user]);
   useEffect(() => { queueMicrotask(() => void loadMine()); }, [loadMine]);
+  useEffect(() => {
+    if (!user) return;
+    const controller = new AbortController();
+    const timer = setInterval(() => { void api.myRoom(apiBase).then(result => { if (!controller.signal.aborted) setRoom(result.data); }).catch(() => {}); }, 5000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [apiBase, user]);
 
   async function save() {
     if (!title.trim()) return;
@@ -41,8 +49,8 @@ export function RoomStudio({ onChanged }: { onChanged: () => void | Promise<void
     if (!room) return;
     setLoading(true); setError('');
     try {
-      if (room.status === 1) await api.stopRoom(apiBase, room.room_id);
-      else await api.startRoom(apiBase, room.room_id, room.room_title);
+      if (room.status === 1) { await api.stopRoom(apiBase, room.room_id); setCredentials(null); }
+      else setCredentials((await api.startRoom(apiBase, room.room_id, room.room_title)).data);
       await loadMine(); await onChanged();
     } catch (err) { setError(err instanceof Error ? err.message : '操作失败'); }
     finally { setLoading(false); }
@@ -58,6 +66,14 @@ export function RoomStudio({ onChanged }: { onChanged: () => void | Promise<void
           <div className="flex items-center gap-4"><div className="grid size-12 shrink-0 place-items-center rounded-xl bg-[#ff4d3d]/10 text-[#ff6255]"><Radio /></div><div><p className="text-[10px] font-semibold tracking-[.16em] text-white/35">CREATOR STUDIO</p><h2 className="mt-1 text-xl font-bold">{room ? room.room_title : '还没有直播间'}</h2><p className="mt-1 text-sm text-white/38">{room ? (room.status === 1 ? '直播进行中 · 所有观众均可加入' : `房间 #${room.room_id} · 当前未开播`) : '每个账号可创建一个直播间'}</p></div></div>
           <div className="flex flex-wrap gap-2">{room ? <><Button variant="outline" onClick={() => { setAction('rename'); setTitle(room.room_title); setOpen(true); }}><Pencil />改名</Button><Button onClick={() => void toggleLive()} disabled={loading} className={room.status === 1 ? 'bg-white text-black hover:bg-white/80' : 'bg-[#ff4d3d] hover:bg-[#ff6356]'}>{loading ? <LoaderCircle className="animate-spin" /> : room.status === 1 ? <CircleStop /> : <Play />}{room.status === 1 ? '结束直播' : '开始直播'}</Button>{room.status === 1 && <Link href={`/rooms/${room.room_id}`}><Button variant="ghost">进入房间 <ArrowRight /></Button></Link>}</> : <Button onClick={() => { setAction('create'); setTitle(''); setOpen(true); }} className="bg-[#ff4d3d] hover:bg-[#ff6356]"><Plus />创建房间</Button>}</div>
         </div>
+        {credentials && <div className="mt-5 space-y-3 rounded-xl border border-white/10 bg-black/20 p-4 text-sm">
+          <p className="font-semibold">OBS 推流设置</p><p className="text-white/50">选择「自定义」服务，填写以下两项。收到推流后自动开播；停止推流即结束本场，重新开播需领取新密钥。</p>
+          <label htmlFor="live-server" className="block">服务器<Input id="live-server" readOnly value={credentials.server} onFocus={event => event.target.select()} className="mt-2" /></label>
+          <label htmlFor="live-key" className="block">推流密钥（仅自己可见，请勿分享）<Input id="live-key" readOnly type={showKey ? 'text' : 'password'} value={credentials.stream_key} onFocus={event => event.target.select()} className="mt-2" /></label>
+          <button type="button" className="text-xs text-[#ff786c]" onClick={() => setShowKey(value => !value)}>{showKey ? '隐藏密钥' : '显示密钥以便复制'}</button>
+          <p className="text-xs text-white/40">首次连接有效期至 {new Date(credentials.expires_at).toLocaleTimeString()}。编码选择 H.264 + AAC，关键帧间隔 2 秒。</p>
+          <Button variant="outline" disabled={loading} onClick={() => { void api.stopRoom(apiBase, room!.room_id).then(async () => { setCredentials(null); await loadMine(); await onChanged(); }).catch(err => setError(err instanceof Error ? err.message : '取消失败')); }}>撤销本场推流凭证</Button>
+        </div>}
         {error && <p className="mt-4 rounded-lg bg-red-400/8 px-3 py-2 text-sm text-red-300">{error}</p>}
       </div>
       <Dialog open={open} onOpenChange={setOpen}><DialogContent className="border-white/10 bg-[#11151d]"><DialogHeader><DialogTitle>{action === 'rename' ? '修改房间标题' : '创建直播间'}</DialogTitle><DialogDescription>标题长度为 1–100 个字符，之后仍可修改。</DialogDescription></DialogHeader><div className="space-y-3"><Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={100} className="h-11" placeholder="例如：今晚一起写 Go" /><Button onClick={() => void save()} disabled={loading || !title.trim()} className="h-10 w-full">{loading && <LoaderCircle className="animate-spin" />}保存</Button></div></DialogContent></Dialog>

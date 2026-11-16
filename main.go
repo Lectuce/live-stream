@@ -9,6 +9,7 @@ import (
 	"live-stream/internal/kafka"
 	"live-stream/internal/outbox"
 	"live-stream/internal/rousters"
+	"live-stream/internal/service"
 	"live-stream/internal/ws"
 	"log"
 	"net/http"
@@ -28,6 +29,13 @@ func main() {
 
 	dao.Initdb()
 	dao.InitRedis()
+	mediaDone, mediaErr := service.StartLiveMedia(ctx)
+	if mediaErr != nil {
+		if os.Getenv("LIVE_MEDIA_SECRET") != "" {
+			log.Fatalf("configured live media failed to start: %v", mediaErr)
+		}
+		log.Printf("live media disabled: %v", mediaErr)
+	}
 	reconciledRooms, err := dao.ReconcileRoomLikeCounts(ctx, true)
 	if err != nil {
 		log.Fatalf("restore room like counts failed: %v", err)
@@ -106,6 +114,11 @@ func main() {
 
 	// 等待gin服务退出
 	<-serverExit
+	select {
+	case <-mediaDone:
+	case <-shutdownCtx.Done():
+		log.Println("media worker shutdown timed out")
+	}
 	select {
 	case <-contentWorkersDone:
 	case <-shutdownCtx.Done():

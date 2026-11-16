@@ -2,10 +2,8 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"live-stream/internal/config"
-	"live-stream/internal/dao"
 	"live-stream/internal/model"
 	"live-stream/internal/repo"
 	"log"
@@ -100,69 +98,4 @@ func UpdateRoom(c context.Context, updateReq *model.UpdateRoomRequest, loginID u
 
 	return room, nil
 
-}
-
-func StartLiveService(ctx context.Context, roomID uint64, title string, loginID uint64) error {
-	// 当前房间必须是未开播0，不能重复开播
-	room, err := repo.SelectRoomByRoomID(ctx, roomID)
-	if err != nil {
-		return err
-	}
-	if room == nil {
-		return ErrInvalidRoomID
-	}
-	// 房主权限校验
-	if room.OwnerID != loginID {
-		return ErrNotRoomOwner
-	}
-	if room.Status != 0 {
-		return errors.New("room is already live")
-	}
-	return repo.StartLive(ctx, roomID, title)
-}
-
-func StopLiveService(ctx context.Context, roomID uint64, loginID uint64) error {
-	room, err := repo.SelectRoomByRoomID(ctx, roomID)
-	if err != nil {
-		return err
-	}
-	if room == nil {
-		return ErrInvalidRoomID
-	}
-	// 房主权限校验
-	if room.OwnerID != loginID {
-		return ErrNotRoomOwner
-	}
-	if room.Status != 1 {
-		return errors.New("room is not live")
-	}
-	err = repo.StopLive(ctx, roomID)
-	if err != nil {
-		return err
-	}
-
-	message := model.Message{
-		Type:   model.MsgTypeSystem,
-		RoomID: roomID,
-		Data: map[string]interface{}{
-			"sub_type": "room_status",
-			"status":   0,
-			"reason":   "stream_ended",
-		},
-	}
-
-	payload, err := json.Marshal(message)
-	if err != nil {
-		log.Printf("marshal room status event failed, room_id=%d, err=%v", roomID, err)
-		return nil
-	}
-
-	err = dao.Publish(ctx, dao.DanmuChannel, string(payload))
-	if err != nil {
-		// 数据库已经成功关播，不能因为广播失败向主播返回关播失败。
-		// 观众端后续可以通过状态查询纠正。
-		log.Printf("publish room status event failed, room_id=%d, err=%v", roomID, err)
-	}
-
-	return nil
 }

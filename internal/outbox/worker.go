@@ -95,7 +95,7 @@ func DecodeEvent(payload []byte) (model.ContentEvent, error) {
 	if _, err := uuid.Parse(event.EventID); err != nil {
 		return event, errors.New("invalid event ID")
 	}
-	if event.EventType != "video.published" && event.EventType != "post.published" {
+	if event.EventType != "video.published" && event.EventType != "post.published" && event.EventType != "live.started" {
 		return event, errors.New("unsupported event type")
 	}
 	if event.ActorID == 0 || event.TargetID == 0 || event.PublishedAt.IsZero() || event.PublishedAt.Year() < 1970 || event.PublishedAt.Year() > 9999 || event.PublishedAt.Nanosecond()%1000 != 0 {

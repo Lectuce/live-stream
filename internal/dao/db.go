@@ -41,7 +41,7 @@ func Initdb() {
 	// 	}
 	// }
 
-	if err := db.AutoMigrate(&model.Room{}); err != nil {
+	if err := db.AutoMigrate(&model.Room{}, &model.LiveSession{}); err != nil {
 		panic(fmt.Errorf("Database table Room migration failed: %v", err))
 	}
 	if err := db.AutoMigrate(&model.User{}); err != nil {

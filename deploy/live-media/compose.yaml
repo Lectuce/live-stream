@@ -1,0 +1,17 @@
+services:
+  srs:
+    image: ossrs/srs:6
+    restart: unless-stopped
+    network_mode: host
+    mem_limit: 512m
+    cpus: 0.75
+    command: ["./objs/srs", "-c", "/usr/local/srs/conf/live.conf"]
+    volumes:
+      - ./srs.conf:/usr/local/srs/conf/live.conf:ro
+    tmpfs:
+      - /usr/local/srs/objs/nginx/html:rw,size=256m,mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "2"

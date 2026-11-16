@@ -54,6 +54,7 @@ type FeedVideo struct {
 }
 
 type FollowingFeedItem struct {
+	Live        *FeedLive  `json:"live,omitempty"`
 	EventID     string     `json:"event_id"`
 	Type        string     `json:"type"`
 	PublishedAt time.Time  `json:"published_at"`

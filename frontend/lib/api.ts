@@ -143,7 +143,7 @@ export const api = {
   logout: (base: string) => request<{ message: string }>(base, '/api/v1/auth/logout', { method: 'POST' }),
   createRoom: (base: string, title: string) => request<ApiEnvelope<Room>>(base, '/api/v1/rooms', { method: 'POST', body: JSON.stringify({ title }) }),
   updateRoom: (base: string, id: number, title: string) => request<ApiEnvelope<Room>>(base, `/api/v1/rooms/${id}`, { method: 'PATCH', body: JSON.stringify({ room_title: title }) }),
-  startRoom: (base: string, id: number, title: string) => request<{ message: string }>(base, `/api/v1/rooms/${id}/start`, { method: 'POST', body: JSON.stringify({ room_title: title }) }),
+  startRoom: (base: string, id: number, title: string) => request<ApiEnvelope<{session_id:string;status:string;server:string;stream_key:string;expires_at:string}>>(base, `/api/v1/rooms/${id}/start`, { method: 'POST', body: JSON.stringify({ room_title: title }) }),
   stopRoom: (base: string, id: number) => request<{ message: string }>(base, `/api/v1/rooms/${id}/stop`, { method: 'POST', body: '{}' }),
   history: (base: string, id: number, before = 0, limit = 50) => request<ApiEnvelope<HistoryPage>>(base, `/api/v1/rooms/${id}/messages?before_id=${before}&limit=${limit}`),
   replay: (base: string, id: number, afterSeq: number, limit = 200) => request<ApiEnvelope<ReplayPage>>(base, `/api/v1/rooms/${id}/messages/replay?after_seq=${afterSeq}&limit=${limit}`),

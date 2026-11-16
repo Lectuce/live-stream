@@ -76,6 +76,7 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 		feeds := apiV1Group.Group("/feeds")
 		{
 			feeds.GET("/live/hot", handler.GetHotLiveFeed)
+			feeds.GET("/live/following", middleware.Auth, handler.FollowingLive)
 			feeds.GET("/following", middleware.Auth, handler.GetFollowingFeed)
 
 		}
