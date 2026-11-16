@@ -6,6 +6,7 @@ import { AppHeader } from '@/components/app-header';
 import { AuthorCard } from '@/components/author-card';
 import { ContentActions } from '@/components/content-actions';
 import { ContentComments } from '@/components/content-comments';
+import { VideoPlayer } from '@/components/video-player';
 import { useAuth } from '@/components/auth-provider';
 import { api } from '@/lib/api';
 import type { Video } from '@/lib/types';
@@ -17,7 +18,6 @@ export function VideoDetail({ videoId }: { videoId: string }) {
     video?: Video;
     error?: string;
   } | null>(null);
-  const [mediaError, setMediaError] = useState('');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -62,25 +62,7 @@ export function VideoDetail({ videoId }: { videoId: string }) {
             <h1 className="mt-6 text-2xl font-bold">{video.title}</h1>
             <AuthorCard userId={video.owner_id} />
 
-            <video
-              key={video.video_id}
-              src={video.play_url}
-              controls
-              playsInline
-              preload="metadata"
-              className="mt-6 aspect-video w-full rounded-xl bg-black"
-              onLoadedMetadata={() => setMediaError('')}
-              onError={() => setMediaError('视频加载失败，请检查媒体地址和编码')}
-            >
-              <track
-                kind="captions"
-                src="data:text/vtt,WEBVTT"
-                srcLang="zh"
-                label="暂无字幕"
-              />
-            </video>
-
-            {mediaError && <p className="mt-3 text-red-400">{mediaError}</p>}
+            <VideoPlayer key={video.video_id} video={video} />
 
             <p className="mt-6 whitespace-pre-wrap text-white/70">
               {video.description}

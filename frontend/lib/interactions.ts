@@ -1,7 +1,7 @@
 import { request } from '@/lib/api';
 import type { ApiEnvelope, Page } from '@/lib/types';
 
-export type TargetType = 'video' | 'post' | 'comment' | 'danmaku';
+export type TargetType = 'video' | 'post' | 'comment' | 'danmaku' | 'video_danmaku';
 export interface LikeState {
   liked: boolean;
   like_count: number;

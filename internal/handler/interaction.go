@@ -242,7 +242,7 @@ func validReportRef(kind, ref string) (string, bool) {
 		id, err := uuid.Parse(ref)
 		return id.String(), err == nil
 	}
-	if kind != "video" && kind != "post" && kind != "comment" {
+	if kind != "video" && kind != "post" && kind != "comment" && kind != "video_danmaku" {
 		return "", false
 	}
 	id, err := strconv.ParseUint(ref, 10, 64)
@@ -283,7 +283,7 @@ func Reports(c *gin.Context) {
 	}
 	status := c.DefaultQuery("status", "pending")
 	kind := c.Query("target_type")
-	if (status != "pending" && status != "resolved" && status != "dismissed") || (kind != "" && kind != "video" && kind != "post" && kind != "comment" && kind != "danmaku") {
+	if (status != "pending" && status != "resolved" && status != "dismissed") || (kind != "" && kind != "video" && kind != "post" && kind != "comment" && kind != "danmaku" && kind != "video_danmaku") {
 		c.JSON(400, gin.H{"message": "筛选条件无效"})
 		return
 	}

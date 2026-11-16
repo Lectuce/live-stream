@@ -23,6 +23,7 @@ const kinds: Record<string, string> = {
   post: '图文',
   comment: '评论',
   danmaku: '直播弹幕',
+  video_danmaku: '视频弹幕',
 };
 const actions: Record<string, string> = {
   hidden: '隐藏内容',

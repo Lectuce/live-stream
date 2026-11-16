@@ -60,7 +60,7 @@ func Initdb() {
 		panic(fmt.Errorf("Database table LikeAggregationCheckpoint migration failed: %v", err))
 	}
 
-	if err := db.AutoMigrate(&model.Video{}); err != nil {
+	if err := db.AutoMigrate(&model.Video{}, &model.VideoDanmaku{}); err != nil {
 		panic(fmt.Errorf("Database table video migration failed: %v", err))
 	}
 	if err := db.AutoMigrate(&model.VideoReview{}); err != nil {

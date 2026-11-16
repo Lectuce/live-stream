@@ -78,6 +78,21 @@ func reportTarget(db *gorm.DB, kind, ref string, public, lock bool) (ReportTarge
 			path = "video"
 		}
 		target = ReportTarget{c.Content, c.Version, fmt.Sprintf("/%s/%d", path, c.TargetID)}
+	case "video_danmaku":
+		var d model.VideoDanmaku
+		q := db.Where("id = ? AND deleted_at IS NULL", id)
+		if public {
+			q = q.Where("hidden = false")
+		}
+		if err := q.First(&d).Error; err != nil {
+			return target, err
+		}
+		if public {
+			if err := publicCommentTarget(db.Session(&gorm.Session{NewDB: true}), "video", d.VideoID, false); err != nil {
+				return target, err
+			}
+		}
+		target = ReportTarget{d.Content, d.Version, fmt.Sprintf("/video/%d", d.VideoID)}
 	case "danmaku":
 		var d model.Danma
 		q := db.Where("message_id = ?", ref)
@@ -210,6 +225,8 @@ func moderateReportTarget(tx *gorm.DB, r *model.Report, actor, version uint64, h
 			hidden = &now
 		}
 		return tx.Model(&model.Danma{}).Where("message_id = ?", r.TargetID).Updates(map[string]any{"hidden_at": hidden, "moderation_version": gorm.Expr("moderation_version + 1")}).Error
+	case "video_danmaku":
+		return tx.Model(&model.VideoDanmaku{}).Where("id = ? AND deleted_at IS NULL", id).Updates(map[string]any{"hidden": hide, "version": gorm.Expr("version + 1")}).Error
 	}
 	return ErrCommentTarget
 }
