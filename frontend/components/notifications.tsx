@@ -47,11 +47,12 @@ function UnreadLink() {
     <Link
       href="/messages"
       aria-label={`消息，${count}条未读`}
-      className="relative inline-flex items-center p-2 text-white/65"
+      title="消息中心"
+      className="relative grid size-9 place-items-center rounded-lg border border-transparent text-white/55 transition hover:border-white/8 hover:bg-white/5 hover:text-white"
     >
-      <Bell className="size-4" />
+      <Bell className="size-[18px]" />
       {count > 0 && (
-        <span className="absolute -right-1 -top-1 rounded-full bg-[#ff4d3d] px-1 text-[10px] text-white">
+        <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-[#ff4d3d] px-1 text-center text-[9px] leading-4 text-white shadow-[0_0_0_2px_#0c0f15]">
           {count > 99 ? '99+' : count}
         </span>
       )}
