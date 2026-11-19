@@ -352,26 +352,58 @@ function Invoke-Benchmark {
     Write-Step "Running WebSocket benchmark"
     $outputDirectory = Join-Path $projectRoot "test-results"
     New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
-    $benchmarkLog = Join-Path $outputDirectory ("ws-benchmark-" + (Get-Date -Format "yyyyMMdd-HHmmssfff") + ".log")
+    $benchmarkStamp = Get-Date -Format "yyyyMMdd-HHmmssfff"
+    $benchmarkLog = Join-Path $outputDirectory ("ws-benchmark-$benchmarkStamp.log")
+    $benchmarkStdoutLog = Join-Path $outputDirectory ("ws-benchmark-$benchmarkStamp.stdout.log")
     $benchmarkExitCode = 0
-    $previousErrorActionPreference = $ErrorActionPreference
+    $benchmarkProcess = $null
+    $reportedLineCount = 0
     try {
-        # Go 的 log 包会将正常的基准测试输出写入 stderr。当全局首选项为 Stop 时，
-        # Windows PowerShell 5.1 会将原生命令的 stderr 包装为 NativeCommandError，
-        # 因此这里临时允许原生日志继续输出。
-        $ErrorActionPreference = "Continue"
-        & $benchmarkExecutable @arguments 2>&1 |
-            Tee-Object -FilePath $benchmarkLog |
-            ForEach-Object {
-                $line = $_.ToString()
+        # Go 的 log 包把正常进度写入 stderr。直接使用 2>&1 管道时，Windows
+        # PowerShell 会把第一行正常日志包装成 NativeCommandError，并在全局
+        # ErrorActionPreference=Stop 时提前终止压测。改为进程级文件重定向，
+        # 再增量读取日志，不让原生 stderr 进入 PowerShell 错误流。
+        $benchmarkProcess = Start-Process `
+            -FilePath $benchmarkExecutable `
+            -ArgumentList $arguments `
+            -PassThru `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $benchmarkStdoutLog `
+            -RedirectStandardError $benchmarkLog
+
+        do {
+            if (Test-Path -LiteralPath $benchmarkLog -PathType Leaf) {
+                $lines = @(Get-Content -LiteralPath $benchmarkLog)
+                for ($index = $reportedLineCount; $index -lt $lines.Count; $index++) {
+                    $line = $lines[$index].ToString()
+                    if ($line -match "\[(BENCHMARK|STATS|FINAL|WARN|DIAL ERROR|REPLAY ERROR)\]") {
+                        Write-Host $line
+                    }
+                }
+                $reportedLineCount = $lines.Count
+            }
+            if (-not $benchmarkProcess.HasExited) {
+                Start-Sleep -Milliseconds 500
+            }
+        } while (-not $benchmarkProcess.HasExited)
+
+        $benchmarkProcess.WaitForExit()
+        if (Test-Path -LiteralPath $benchmarkLog -PathType Leaf) {
+            $lines = @(Get-Content -LiteralPath $benchmarkLog)
+            for ($index = $reportedLineCount; $index -lt $lines.Count; $index++) {
+                $line = $lines[$index].ToString()
                 if ($line -match "\[(BENCHMARK|STATS|FINAL|WARN|DIAL ERROR|REPLAY ERROR)\]") {
                     Write-Host $line
                 }
             }
-        $benchmarkExitCode = $LASTEXITCODE
+        }
+        $benchmarkExitCode = $benchmarkProcess.ExitCode
     }
     finally {
-        $ErrorActionPreference = $previousErrorActionPreference
+        if ($null -ne $benchmarkProcess -and -not $benchmarkProcess.HasExited) {
+            Stop-Process -Id $benchmarkProcess.Id -ErrorAction SilentlyContinue
+            $benchmarkProcess.WaitForExit(5000) | Out-Null
+        }
     }
     if ($benchmarkExitCode -ne 0) {
         throw "WebSocket benchmark exited with code $benchmarkExitCode"
@@ -708,13 +740,13 @@ finally {
     if ($null -ne $script:PublisherProcess -and -not $script:PublisherProcess.HasExited -and (-not $KeepRoomLive -or -not $testSucceeded)) {
         Write-Step "Stopping FFmpeg publisher"
         Stop-Process -Id $script:PublisherProcess.Id
-        $script:PublisherProcess.WaitForExit(5000)
+        $script:PublisherProcess.WaitForExit(5000) | Out-Null
     }
 
     if ($null -ne $script:TunnelProcess -and -not $script:TunnelProcess.HasExited) {
         Write-Step "Stopping SSH tunnel"
         Stop-Process -Id $script:TunnelProcess.Id
-        $script:TunnelProcess.WaitForExit(5000)
+        $script:TunnelProcess.WaitForExit(5000) | Out-Null
     }
 
     Pop-Location
