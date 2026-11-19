@@ -363,13 +363,15 @@ function Invoke-Benchmark {
         # PowerShell 会把第一行正常日志包装成 NativeCommandError，并在全局
         # ErrorActionPreference=Stop 时提前终止压测。改为进程级文件重定向，
         # 再增量读取日志，不让原生 stderr 进入 PowerShell 错误流。
-        $benchmarkProcess = Start-Process `
-            -FilePath $benchmarkExecutable `
-            -ArgumentList $arguments `
-            -PassThru `
-            -WindowStyle Hidden `
-            -RedirectStandardOutput $benchmarkStdoutLog `
-            -RedirectStandardError $benchmarkLog
+        $benchmarkProcessArguments = @{
+            FilePath               = $benchmarkExecutable
+            ArgumentList           = $arguments
+            PassThru               = $true
+            WindowStyle            = "Hidden"
+            RedirectStandardOutput = $benchmarkStdoutLog
+            RedirectStandardError  = $benchmarkLog
+        }
+        $benchmarkProcess = Start-Process @benchmarkProcessArguments
 
         do {
             if (Test-Path -LiteralPath $benchmarkLog -PathType Leaf) {
