@@ -359,10 +359,8 @@ function Invoke-Benchmark {
     $benchmarkProcess = $null
     $reportedLineCount = 0
     try {
-        # Go 的 log 包把正常进度写入 stderr。直接使用 2>&1 管道时，Windows
-        # PowerShell 会把第一行正常日志包装成 NativeCommandError，并在全局
-        # ErrorActionPreference=Stop 时提前终止压测。改为进程级文件重定向，
-        # 再增量读取日志，不让原生 stderr 进入 PowerShell 错误流。
+        # Go writes normal benchmark progress to stderr. Redirect at the process
+        # boundary so Windows PowerShell does not turn it into NativeCommandError.
         $benchmarkProcessArguments = @{
             FilePath               = $benchmarkExecutable
             ArgumentList           = $arguments
@@ -399,6 +397,7 @@ function Invoke-Benchmark {
                 }
             }
         }
+        $benchmarkProcess.Refresh()
         $benchmarkExitCode = $benchmarkProcess.ExitCode
     }
     finally {
@@ -407,17 +406,22 @@ function Invoke-Benchmark {
             $benchmarkProcess.WaitForExit(5000) | Out-Null
         }
     }
-    if ($benchmarkExitCode -ne 0) {
-        throw "WebSocket benchmark exited with code $benchmarkExitCode"
-    }
-
     $finalLine = Get-Content -LiteralPath $benchmarkLog |
         ForEach-Object { $_.ToString() } |
         Where-Object { $_ -match "\[FINAL\]" } |
         Select-Object -Last 1
 
     if ([string]::IsNullOrWhiteSpace($finalLine)) {
+        if ($null -ne $benchmarkExitCode -and $benchmarkExitCode -ne 0) {
+            throw "WebSocket benchmark exited with code $benchmarkExitCode. See $benchmarkLog"
+        }
         throw "Benchmark did not print a [FINAL] metrics line. See $benchmarkLog"
+    }
+    if ($null -ne $benchmarkExitCode -and $benchmarkExitCode -ne 0) {
+        throw "WebSocket benchmark exited with code $benchmarkExitCode"
+    }
+    if ($null -eq $benchmarkExitCode) {
+        Write-Warning "PowerShell did not expose the native exit code; accepting the complete [FINAL] line as normal benchmark completion."
     }
 
     $metricsMatch = [regex]::Match(

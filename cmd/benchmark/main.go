@@ -906,7 +906,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 				loss = float64(lag) / float64(expected) * 100
 			}
 			log.Printf(
-				"[STATS] elapsed=%s conns=%d peak=%d dials=%d/%d sent/s=%d accepted=%d rejected=%d realtime=%d recv/s=%d recovered=%d ack/s=%d frames=%d lag=%d loss=%.2f%% errors=%d latency_p50=%s latency_p95=%s latency_p99=%s",
+				"[STATS] elapsed=%s conns=%d peak=%d dials=%d/%d sent_delta=%d accepted=%d rejected=%d realtime=%d recv_delta=%d recovered=%d ack_delta=%d frames=%d lag=%d loss=%.2f%% errors=%d latency_p50=%s latency_p95=%s latency_p99=%s",
 				time.Since(startedAt).Round(time.Second),
 				stats.connected.Load(),
 				stats.peakConnected.Load(),
