@@ -94,6 +94,37 @@ func TestDeliveryTrackerDeduplicatesReplayAndLive(t *testing.T) {
 	}
 }
 
+func TestAcceptedMessagesCreateExpectedFanoutOnce(t *testing.T) {
+	var stats metrics
+	stats.audience.Store(1000)
+	stats.registerSent("message-1")
+	stats.recordTerminal("message-1", "accepted")
+	stats.recordTerminal("message-1", "accepted")
+	stats.recordTerminal("unknown", "accepted")
+
+	if got := stats.accepted.Load(); got != 1 {
+		t.Fatalf("accepted=%d, want 1", got)
+	}
+	if got := stats.expected.Load(); got != 1000 {
+		t.Fatalf("expected=%d, want 1000", got)
+	}
+}
+
+func TestRejectedMessagesDoNotCreateExpectedFanout(t *testing.T) {
+	var stats metrics
+	stats.audience.Store(1000)
+	stats.registerSent("message-1")
+	stats.recordTerminal("message-1", "rejected")
+	stats.recordTerminal("message-1", "accepted")
+
+	if got := stats.rejected.Load(); got != 1 {
+		t.Fatalf("rejected=%d, want 1", got)
+	}
+	if got := stats.expected.Load(); got != 0 {
+		t.Fatalf("expected=%d, want 0", got)
+	}
+}
+
 func TestReplayHTTPBaseURL(t *testing.T) {
 	got, err := replayHTTPBaseURL("", "wss://example.com/api/v1/ws")
 	if err != nil {

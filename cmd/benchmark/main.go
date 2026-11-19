@@ -32,20 +32,65 @@ const (
 )
 
 type metrics struct {
-	connected      atomic.Int64
-	peakConnected  atomic.Int64
-	dialAttempted  atomic.Int64
-	dialSucceeded  atomic.Int64
-	dialFailed     atomic.Int64
-	sent           atomic.Int64
-	received       atomic.Int64
-	expected       atomic.Int64
-	frames         atomic.Int64
-	errors         atomic.Int64
-	ackSent        atomic.Int64
-	resyncRequired atomic.Int64
-	recovered      atomic.Int64
-	latency        latencyHistogram
+	connected       atomic.Int64
+	peakConnected   atomic.Int64
+	audience        atomic.Int64
+	unexpectedExit  atomic.Int64
+	dialAttempted   atomic.Int64
+	dialSucceeded   atomic.Int64
+	dialFailed      atomic.Int64
+	sent            atomic.Int64
+	accepted        atomic.Int64
+	rejected        atomic.Int64
+	realtime        atomic.Int64
+	received        atomic.Int64
+	expected        atomic.Int64
+	frames          atomic.Int64
+	errors          atomic.Int64
+	ackSent         atomic.Int64
+	resyncRequired  atomic.Int64
+	recovered       atomic.Int64
+	latency         latencyHistogram
+	realtimeLatency latencyHistogram
+	recoveryLatency latencyHistogram
+	sentIDs         sync.Map
+	terminalIDs     sync.Map
+}
+
+func (m *metrics) registerSent(messageID string) {
+	if messageID != "" {
+		m.sentIDs.Store(messageID, struct{}{})
+	}
+}
+
+func (m *metrics) unregisterSent(messageID string) {
+	if messageID != "" {
+		m.sentIDs.Delete(messageID)
+	}
+}
+
+func (m *metrics) wasSent(messageID string) bool {
+	if messageID == "" {
+		return false
+	}
+	_, ok := m.sentIDs.Load(messageID)
+	return ok
+}
+
+func (m *metrics) recordTerminal(messageID, status string) {
+	if !m.wasSent(messageID) {
+		return
+	}
+	if _, loaded := m.terminalIDs.LoadOrStore(messageID, status); loaded {
+		return
+	}
+	switch status {
+	case "accepted":
+		m.accepted.Add(1)
+		m.expected.Add(m.audience.Load())
+	case "rejected":
+		m.rejected.Add(1)
+	}
 }
 
 var latencyBucketUpperBounds = [...]time.Duration{
@@ -296,7 +341,11 @@ launchLoop:
 
 	dialWG.Wait()
 	if signalCtx.Err() == nil && waitFor(signalCtx, *warmup) {
-		log.Printf("[BENCHMARK] warm-up complete; starting message phase")
+		stats.audience.Store(stats.connected.Load())
+		log.Printf(
+			"[BENCHMARK] warm-up complete; starting message phase with frozen audience=%d",
+			stats.audience.Load(),
+		)
 		close(startSending)
 		if *duration > 0 {
 			if waitFor(signalCtx, *duration) {
@@ -424,6 +473,9 @@ func runClient(
 	updatePeak(&stats.peakConnected, connected)
 	dialWG.Done()
 	defer func() {
+		if ctx.Err() == nil {
+			stats.unexpectedExit.Add(1)
+		}
 		_ = conn.Close()
 		stats.connected.Add(-1)
 	}()
@@ -476,12 +528,13 @@ func runClient(
 				MessageID: uuid.NewString(),
 				Content:   fmt.Sprintf("bench-%d-%d-%d", clientID, sequence, time.Now().UnixNano()),
 			}
+			stats.registerSent(message.MessageID)
 			if err := writeJSON(conn, &writeMu, message); err != nil {
+				stats.unregisterSent(message.MessageID)
 				stats.errors.Add(1)
 				return
 			}
 			stats.sent.Add(1)
-			stats.expected.Add(stats.connected.Load())
 		}
 	}
 }
@@ -569,6 +622,14 @@ func readMessages(
 		var message incomingMessage
 		if err := json.Unmarshal(payload, &message); err != nil {
 			stats.errors.Add(1)
+			continue
+		}
+		if message.Type == "accepted" {
+			stats.recordTerminal(message.MessageID, "accepted")
+			continue
+		}
+		if message.Type == "error" && message.MessageID != "" {
+			stats.recordTerminal(message.MessageID, "rejected")
 			continue
 		}
 		if message.Type == "resync_required" {
@@ -672,15 +733,21 @@ func readMessages(
 			}
 			continue
 		}
-		// Redis 当前广播持久化弹幕时不带 type 字段，
-		// 因此也将 content 作为收到弹幕的判断依据。
+		// 只统计本轮压测实际发送的 message_id。复用已有直播间时，其他
+		// 用户或上一轮残留的 bench-* 消息不能污染本轮投递结果。
 		if message.Type == "danma" || message.Content != "" {
+			if !stats.wasSent(message.MessageID) {
+				continue
+			}
 			if !tracker.observe(message) {
 				continue
 			}
+			stats.realtime.Add(1)
 			stats.received.Add(1)
 			if sentAt, ok := benchmarkSentAt(message.Content); ok {
-				stats.latency.observe(time.Since(sentAt))
+				latency := time.Since(sentAt)
+				stats.latency.observe(latency)
+				stats.realtimeLatency.observe(latency)
 			}
 			if message.RoomSeq > 0 {
 				// room_seq 是 Kafka 分区游标。它在单个房间内单调递增，
@@ -744,13 +811,18 @@ func recoverReplay(
 		}
 		for _, message := range payload.Data.Items {
 			message.Type = "danma"
+			if !stats.wasSent(message.MessageID) {
+				continue
+			}
 			if !tracker.observe(message) {
 				continue
 			}
 			stats.received.Add(1)
 			stats.recovered.Add(1)
 			if sentAt, ok := benchmarkSentAt(message.Content); ok {
-				stats.latency.observe(time.Since(sentAt))
+				latency := time.Since(sentAt)
+				stats.latency.observe(latency)
+				stats.recoveryLatency.observe(latency)
 			}
 		}
 		if payload.Data.NextSeq > cursor {
@@ -822,6 +894,9 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 			return
 		case <-ticker.C:
 			sent := stats.sent.Load()
+			accepted := stats.accepted.Load()
+			rejected := stats.rejected.Load()
+			realtime := stats.realtime.Load()
 			received := stats.received.Load()
 			ackSent := stats.ackSent.Load()
 			expected := stats.expected.Load()
@@ -831,14 +906,18 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 				loss = float64(lag) / float64(expected) * 100
 			}
 			log.Printf(
-				"[STATS] elapsed=%s conns=%d peak=%d dials=%d/%d sent/s=%d recv/s=%d ack/s=%d frames=%d lag=%d loss=%.2f%% errors=%d latency_p50=%s latency_p95=%s latency_p99=%s",
+				"[STATS] elapsed=%s conns=%d peak=%d dials=%d/%d sent/s=%d accepted=%d rejected=%d realtime=%d recv/s=%d recovered=%d ack/s=%d frames=%d lag=%d loss=%.2f%% errors=%d latency_p50=%s latency_p95=%s latency_p99=%s",
 				time.Since(startedAt).Round(time.Second),
 				stats.connected.Load(),
 				stats.peakConnected.Load(),
 				stats.dialSucceeded.Load(),
 				stats.dialAttempted.Load(),
 				sent-lastSent,
+				accepted,
+				rejected,
+				realtime,
 				received-lastReceived,
+				stats.recovered.Load(),
 				ackSent-lastAckSent,
 				stats.frames.Load(),
 				lag,
@@ -858,24 +937,37 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 func printFinal(stats *metrics, startedAt time.Time) {
 	duration := time.Since(startedAt)
 	log.Printf(
-		"[FINAL] duration=%s conns=%d sent=%d received=%d frames=%d expected=%d errors=%d peak_conns=%d dial_attempted=%d dial_succeeded=%d dial_failed=%d ack_sent=%d resync_required=%d recovered=%d latency_samples=%d latency_p50=%s latency_p95=%s latency_p99=%s",
+		"[FINAL] duration=%s conns=%d audience=%d sent=%d accepted=%d rejected=%d realtime_received=%d recovered=%d received=%d frames=%d expected=%d errors=%d unexpected_disconnects=%d peak_conns=%d dial_attempted=%d dial_succeeded=%d dial_failed=%d ack_sent=%d resync_required=%d latency_samples=%d latency_p50=%s latency_p95=%s latency_p99=%s realtime_latency_samples=%d realtime_latency_p50=%s realtime_latency_p95=%s realtime_latency_p99=%s recovery_latency_samples=%d recovery_latency_p50=%s recovery_latency_p95=%s recovery_latency_p99=%s",
 		duration.Round(time.Millisecond),
 		stats.connected.Load(),
+		stats.audience.Load(),
 		stats.sent.Load(),
+		stats.accepted.Load(),
+		stats.rejected.Load(),
+		stats.realtime.Load(),
+		stats.recovered.Load(),
 		stats.received.Load(),
 		stats.frames.Load(),
 		stats.expected.Load(),
 		stats.errors.Load(),
+		stats.unexpectedExit.Load(),
 		stats.peakConnected.Load(),
 		stats.dialAttempted.Load(),
 		stats.dialSucceeded.Load(),
 		stats.dialFailed.Load(),
 		stats.ackSent.Load(),
 		stats.resyncRequired.Load(),
-		stats.recovered.Load(),
 		stats.latency.count.Load(),
 		stats.latency.percentile(0.50),
 		stats.latency.percentile(0.95),
 		stats.latency.percentile(0.99),
+		stats.realtimeLatency.count.Load(),
+		stats.realtimeLatency.percentile(0.50),
+		stats.realtimeLatency.percentile(0.95),
+		stats.realtimeLatency.percentile(0.99),
+		stats.recoveryLatency.count.Load(),
+		stats.recoveryLatency.percentile(0.50),
+		stats.recoveryLatency.percentile(0.95),
+		stats.recoveryLatency.percentile(0.99),
 	)
 }

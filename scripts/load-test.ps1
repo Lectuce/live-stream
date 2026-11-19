@@ -11,10 +11,12 @@ param(
     [double]$ActiveRatio = 1.0,
 
     [ValidateRange(-1, 1000000)]
-    [int]$ActiveClients = -1,
+    [int]$ActiveClients = 1,
 
     [ValidateRange(0.0, 100.0)]
     [double]$MaxLossPercent = 0.0,
+	[ValidateRange(0.0, 100.0)]
+	[double]$MaxRealtimeLossPercent = 100.0,
 	[string]$MaxP95Latency = "",
 
     [string]$SendInterval = "2s",
@@ -24,6 +26,14 @@ param(
 	[string]$Drain = "5s",
 	[ValidateRange(0, 1000000)]
 	[int]$AckEvery = 0,
+	[string]$ReportInterval = "5s",
+
+	[uint64]$RoomId = 0,
+	[string]$SessionId = "",
+	[string]$MediaFile = "",
+	[string]$FFmpegPath = "ffmpeg",
+	[ValidateRange(5, 300)]
+	[int]$LiveWaitSeconds = 45,
 
     [switch]$StartTunnel,
     [string]$SshTarget = "",
@@ -42,8 +52,10 @@ $ErrorActionPreference = "Stop"
 
 $script:TunnelProcess = $null
 $script:RoomStarted = $false
-$script:RoomId = [uint64]0
-$script:Sid = ""
+$script:BenchmarkRoomId = [uint64]0
+$script:BenchmarkSid = ""
+$script:PublisherProcess = $null
+$script:PublisherErrorLog = ""
 $script:WebSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $sendingEnabled = if ($ActiveClients -ge 0) { $ActiveClients -gt 0 } else { $ActiveRatio -gt 0 }
 if ($ActiveClients -gt $Connections) {
@@ -203,6 +215,86 @@ function Start-SshTunnel {
     Wait-TcpPort -HostName "127.0.0.1" -Port $LocalPort
 }
 
+function Set-TestSessionCookie {
+    param([string]$Sid)
+
+    if ([string]::IsNullOrWhiteSpace($Sid)) {
+        return
+    }
+    if ($Sid -notmatch "^[0-9a-fA-F]{64}$") {
+        throw "Session ID must be a 64-character hexadecimal sid cookie value"
+    }
+    $sessionCookie = New-Object System.Net.Cookie("sid", $Sid, "/")
+    # The load generator may connect through a local HTTP tunnel even when the
+    # browser-facing deployment uses a Secure cookie.
+    $sessionCookie.Secure = $false
+    $script:WebSession.Cookies.Add([Uri]$BaseUrl, $sessionCookie)
+}
+
+function Wait-RoomLive {
+    param([uint64]$TargetRoomId)
+
+    $deadline = (Get-Date).AddSeconds($LiveWaitSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if ($null -ne $script:PublisherProcess -and $script:PublisherProcess.HasExited) {
+            throw "FFmpeg publisher exited before room $TargetRoomId became live. See $($script:PublisherErrorLog)"
+        }
+        $detail = Invoke-JsonApi -Method Get -Uri "$BaseUrl/api/v1/rooms/$TargetRoomId"
+        if ([int]$detail.data.status -eq 1) {
+            return
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    throw "Room $TargetRoomId did not become live within $LiveWaitSeconds seconds"
+}
+
+function Start-TestPublisher {
+    param([object]$Credentials)
+
+    $ffmpeg = Get-Command $FFmpegPath -ErrorAction SilentlyContinue
+    if ($null -eq $ffmpeg) {
+        throw "FFmpeg was not found. Install it or pass its executable path with -FFmpegPath; alternatively test an already-live room with -RoomId."
+    }
+    $server = [string]$Credentials.server
+    $streamKey = [string]$Credentials.stream_key
+    if ([string]::IsNullOrWhiteSpace($server) -or [string]::IsNullOrWhiteSpace($streamKey)) {
+        throw "Start-room response did not contain server and stream_key"
+    }
+    $publishUrl = $server.TrimEnd("/") + "/" + $streamKey
+    $outputDirectory = Join-Path $projectRoot "test-results"
+    New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmssfff"
+    $stdoutPath = Join-Path $outputDirectory "publisher-$stamp.out.log"
+    $stderrPath = Join-Path $outputDirectory "publisher-$stamp.err.log"
+    $script:PublisherErrorLog = $stderrPath
+    if ([string]::IsNullOrWhiteSpace($MediaFile)) {
+        $arguments = @(
+            "-nostdin", "-hide_banner", "-loglevel", "warning", "-re",
+            "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25",
+            "-re", "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=44100",
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+            "-pix_fmt", "yuv420p", "-g", "50",
+            "-c:a", "aac", "-b:a", "64k", "-f", "flv", ('"' + $publishUrl + '"')
+        )
+    }
+    else {
+        $resolvedMedia = (Resolve-Path -LiteralPath $MediaFile -ErrorAction Stop).Path
+        $arguments = @(
+            "-nostdin", "-hide_banner", "-loglevel", "warning",
+            "-re", "-stream_loop", "-1", "-i", ('"' + $resolvedMedia + '"'),
+            "-c", "copy", "-f", "flv", ('"' + $publishUrl + '"')
+        )
+    }
+    Write-Step "Starting FFmpeg publisher"
+    $script:PublisherProcess = Start-Process `
+        -FilePath $ffmpeg.Source `
+        -ArgumentList $arguments `
+        -PassThru `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $stdoutPath `
+        -RedirectStandardError $stderrPath
+}
+
 function Invoke-CodeChecks {
     Write-Step "Running Go compile tests"
     & go test ./...
@@ -223,13 +315,20 @@ function Invoke-Benchmark {
         [string]$Sid
     )
 
+    $binaryDirectory = Join-Path $projectRoot "bin"
+    $benchmarkExecutable = Join-Path $binaryDirectory "ws-benchmark.exe"
+    New-Item -ItemType Directory -Force -Path $binaryDirectory | Out-Null
+    Write-Step "Building WebSocket benchmark binary"
+    & go build -o $benchmarkExecutable ./cmd/benchmark
+    if ($LASTEXITCODE -ne 0) {
+        throw "Building WebSocket benchmark failed"
+    }
+
     $activeText = $ActiveRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     $arguments = @(
-        "run", "./cmd/benchmark",
         "-urls", $WebSocketUrl,
         "-origin", $Origin,
         "-room", $RoomId.ToString(),
-        "-sid", $Sid,
         "-c", $Connections.ToString(),
         "-active", $activeText,
         "-r", $SendInterval,
@@ -237,8 +336,12 @@ function Invoke-Benchmark {
 		"-warmup", $Warmup,
 		"-d", $Duration,
 		"-drain", $Drain,
+		"-report", $ReportInterval,
 		"-replay-base-url", $BaseUrl
 	)
+	if (-not [string]::IsNullOrWhiteSpace($Sid)) {
+		$arguments += @("-sid", $Sid)
+	}
 	if ($AckEvery -gt 0) {
 		$arguments += @("-ack-every", $AckEvery.ToString())
 	}
@@ -247,7 +350,9 @@ function Invoke-Benchmark {
     }
 
     Write-Step "Running WebSocket benchmark"
-    $benchmarkLines = @()
+    $outputDirectory = Join-Path $projectRoot "test-results"
+    New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
+    $benchmarkLog = Join-Path $outputDirectory ("ws-benchmark-" + (Get-Date -Format "yyyyMMdd-HHmmssfff") + ".log")
     $benchmarkExitCode = 0
     $previousErrorActionPreference = $ErrorActionPreference
     try {
@@ -255,9 +360,14 @@ function Invoke-Benchmark {
         # Windows PowerShell 5.1 会将原生命令的 stderr 包装为 NativeCommandError，
         # 因此这里临时允许原生日志继续输出。
         $ErrorActionPreference = "Continue"
-        & go @arguments 2>&1 |
-            Tee-Object -Variable benchmarkLines |
-            ForEach-Object { Write-Host $_ }
+        & $benchmarkExecutable @arguments 2>&1 |
+            Tee-Object -FilePath $benchmarkLog |
+            ForEach-Object {
+                $line = $_.ToString()
+                if ($line -match "\[(BENCHMARK|STATS|FINAL|WARN|DIAL ERROR|REPLAY ERROR)\]") {
+                    Write-Host $line
+                }
+            }
         $benchmarkExitCode = $LASTEXITCODE
     }
     finally {
@@ -267,21 +377,25 @@ function Invoke-Benchmark {
         throw "WebSocket benchmark exited with code $benchmarkExitCode"
     }
 
-    $finalLine = $benchmarkLines |
+    $finalLine = Get-Content -LiteralPath $benchmarkLog |
         ForEach-Object { $_.ToString() } |
         Where-Object { $_ -match "\[FINAL\]" } |
         Select-Object -Last 1
 
     if ([string]::IsNullOrWhiteSpace($finalLine)) {
-        throw "Benchmark did not print a [FINAL] metrics line"
+        throw "Benchmark did not print a [FINAL] metrics line. See $benchmarkLog"
     }
 
     $metricsMatch = [regex]::Match(
         $finalLine,
-        "sent=(?<sent>\d+) received=(?<received>\d+) frames=(?<frames>\d+) expected=(?<expected>\d+) errors=(?<errors>\d+)"
+        "sent=(?<sent>\d+) accepted=(?<accepted>\d+) rejected=(?<rejected>\d+) realtime_received=(?<realtime>\d+) recovered=(?<recovered>\d+) received=(?<received>\d+) frames=(?<frames>\d+) expected=(?<expected>\d+) errors=(?<errors>\d+) unexpected_disconnects=(?<unexpected>\d+)"
     )
     if (-not $metricsMatch.Success) {
         throw "Unable to parse benchmark metrics: $finalLine"
+    }
+    $audienceMatch = [regex]::Match($finalLine, "audience=(?<audience>\d+)")
+    if (-not $audienceMatch.Success) {
+        throw "Unable to parse benchmark audience metrics: $finalLine"
     }
     $connectionMatch = [regex]::Match(
         $finalLine,
@@ -292,7 +406,7 @@ function Invoke-Benchmark {
     }
 	$protocolMatch = [regex]::Match(
 		$finalLine,
-		"ack_sent=(?<ack>\d+) resync_required=(?<resync>\d+) recovered=(?<recovered>\d+)"
+		"ack_sent=(?<ack>\d+) resync_required=(?<resync>\d+)"
 	)
 	if (-not $protocolMatch.Success) {
 		throw "Unable to parse benchmark protocol metrics: $finalLine"
@@ -304,8 +418,26 @@ function Invoke-Benchmark {
 	if (-not $latencyMatch.Success) {
 		throw "Unable to parse benchmark latency metrics: $finalLine"
 	}
+	$realtimeLatencyMatch = [regex]::Match(
+		$finalLine,
+		"realtime_latency_samples=(?<samples>\d+) realtime_latency_p50=(?<p50>\S+) realtime_latency_p95=(?<p95>\S+) realtime_latency_p99=(?<p99>\S+)"
+	)
+	if (-not $realtimeLatencyMatch.Success) {
+		throw "Unable to parse realtime latency metrics: $finalLine"
+	}
+	$recoveryLatencyMatch = [regex]::Match(
+		$finalLine,
+		"recovery_latency_samples=(?<samples>\d+) recovery_latency_p50=(?<p50>\S+) recovery_latency_p95=(?<p95>\S+) recovery_latency_p99=(?<p99>\S+)"
+	)
+	if (-not $recoveryLatencyMatch.Success) {
+		throw "Unable to parse recovery latency metrics: $finalLine"
+	}
 
     $sent = [int64]$metricsMatch.Groups["sent"].Value
+	$accepted = [int64]$metricsMatch.Groups["accepted"].Value
+	$rejected = [int64]$metricsMatch.Groups["rejected"].Value
+	$realtimeReceived = [int64]$metricsMatch.Groups["realtime"].Value
+	$recovered = [int64]$metricsMatch.Groups["recovered"].Value
     $received = [int64]$metricsMatch.Groups["received"].Value
     $expected = [int64]$metricsMatch.Groups["expected"].Value
     $errors = [int64]$metricsMatch.Groups["errors"].Value
@@ -314,18 +446,32 @@ function Invoke-Benchmark {
 	if ($expected -gt 0) {
 		$lossPercent = $missing * 100.0 / $expected
 	}
+	$realtimeMissing = [Math]::Max([int64]0, $expected - $realtimeReceived)
+	$realtimeLossPercent = 0.0
+	if ($expected -gt 0) {
+		$realtimeLossPercent = $realtimeMissing * 100.0 / $expected
+	}
+	$unexpectedDisconnects = [int64]$metricsMatch.Groups["unexpected"].Value
+    $audience = [int64]$audienceMatch.Groups["audience"].Value
     $peakConnections = [int64]$connectionMatch.Groups["peak"].Value
     $dialAttempted = [int64]$connectionMatch.Groups["attempted"].Value
     $dialSucceeded = [int64]$connectionMatch.Groups["succeeded"].Value
     $dialFailed = [int64]$connectionMatch.Groups["failed"].Value
 	$ackSent = [int64]$protocolMatch.Groups["ack"].Value
 	$resyncRequired = [int64]$protocolMatch.Groups["resync"].Value
-	$recovered = [int64]$protocolMatch.Groups["recovered"].Value
 	$latencySamples = [int64]$latencyMatch.Groups["samples"].Value
 	$latencyP50 = $latencyMatch.Groups["p50"].Value
 	$latencyP95 = $latencyMatch.Groups["p95"].Value
 	$latencyP99 = $latencyMatch.Groups["p99"].Value
-	$latencyP95Milliseconds = Convert-GoDurationToMilliseconds -DurationText $latencyP95
+	$realtimeLatencySamples = [int64]$realtimeLatencyMatch.Groups["samples"].Value
+	$realtimeLatencyP50 = $realtimeLatencyMatch.Groups["p50"].Value
+	$realtimeLatencyP95 = $realtimeLatencyMatch.Groups["p95"].Value
+	$realtimeLatencyP99 = $realtimeLatencyMatch.Groups["p99"].Value
+	$recoveryLatencySamples = [int64]$recoveryLatencyMatch.Groups["samples"].Value
+	$recoveryLatencyP50 = $recoveryLatencyMatch.Groups["p50"].Value
+	$recoveryLatencyP95 = $recoveryLatencyMatch.Groups["p95"].Value
+	$recoveryLatencyP99 = $recoveryLatencyMatch.Groups["p99"].Value
+	$latencyP95Milliseconds = Convert-GoDurationToMilliseconds -DurationText $realtimeLatencyP95
 
     if ($errors -ne 0) {
         throw "Benchmark reported $errors errors"
@@ -333,9 +479,18 @@ function Invoke-Benchmark {
     if ($dialAttempted -ne $Connections -or $dialSucceeded -ne $Connections -or $dialFailed -ne 0 -or $peakConnections -ne $Connections) {
         throw "Connection target was not reached: attempted=$dialAttempted succeeded=$dialSucceeded failed=$dialFailed peak=$peakConnections target=$Connections"
     }
+	if ($audience -ne $Connections) {
+		throw "Connected audience changed before message sending: audience=$audience target=$Connections"
+	}
+	if ($unexpectedDisconnects -ne 0) {
+		throw "Benchmark observed $unexpectedDisconnects unexpected connection disconnects"
+	}
     if ($sendingEnabled -and $sent -eq 0) {
         throw "Benchmark did not send any messages"
     }
+	if ($sendingEnabled -and ($accepted -ne $sent -or $rejected -ne 0)) {
+		throw "Server acceptance mismatch: sent=$sent accepted=$accepted rejected=$rejected"
+	}
     if ($sendingEnabled -and $received -eq 0) {
         throw "Benchmark sent messages but received no broadcasts"
     }
@@ -347,17 +502,28 @@ function Invoke-Benchmark {
 		$limitText = $MaxLossPercent.ToString("0.######", [System.Globalization.CultureInfo]::InvariantCulture)
 		throw "Delivery loss exceeded limit: missing=$missing loss=$lossText% limit=$limitText%"
 	}
+	if ($sendingEnabled -and $realtimeLossPercent -gt $MaxRealtimeLossPercent) {
+		$lossText = $realtimeLossPercent.ToString("0.######", [System.Globalization.CultureInfo]::InvariantCulture)
+		$limitText = $MaxRealtimeLossPercent.ToString("0.######", [System.Globalization.CultureInfo]::InvariantCulture)
+		throw "Realtime delivery loss exceeded limit: missing=$realtimeMissing loss=$lossText% limit=$limitText%"
+	}
 	if ($sendingEnabled -and $null -ne $maxP95LatencyMilliseconds -and $latencyP95Milliseconds -gt $maxP95LatencyMilliseconds) {
-		throw "P95 latency exceeded limit: measured=$latencyP95 limit=$MaxP95Latency"
+		throw "Realtime P95 latency exceeded limit: measured=$realtimeLatencyP95 limit=$MaxP95Latency"
 	}
 
     return [pscustomobject]@{
         Sent            = $sent
+		Accepted        = $accepted
+		Rejected        = $rejected
+		RealtimeReceived = $realtimeReceived
+		RealtimeMissing = $realtimeMissing
+		RealtimeLossPercent = $realtimeLossPercent
         Received        = $received
 		Expected        = $expected
 		Missing         = $missing
 		LossPercent     = $lossPercent
         Errors          = $errors
+        Audience        = $audience
         PeakConnections = $peakConnections
         DialAttempted   = $dialAttempted
         DialSucceeded   = $dialSucceeded
@@ -365,10 +531,20 @@ function Invoke-Benchmark {
 		AckSent         = $ackSent
 		ResyncRequired  = $resyncRequired
 		Recovered       = $recovered
+		UnexpectedDisconnects = $unexpectedDisconnects
 		LatencySamples  = $latencySamples
 		LatencyP50      = $latencyP50
 		LatencyP95      = $latencyP95
 		LatencyP99      = $latencyP99
+		RealtimeLatencySamples = $realtimeLatencySamples
+		RealtimeLatencyP50 = $realtimeLatencyP50
+		RealtimeLatencyP95 = $realtimeLatencyP95
+		RealtimeLatencyP99 = $realtimeLatencyP99
+		RecoveryLatencySamples = $recoveryLatencySamples
+		RecoveryLatencyP50 = $recoveryLatencyP50
+		RecoveryLatencyP95 = $recoveryLatencyP95
+		RecoveryLatencyP99 = $recoveryLatencyP99
+		BenchmarkLog    = $benchmarkLog
         FinalLine       = $finalLine
     }
 }
@@ -425,98 +601,114 @@ try {
     Wait-TcpPort -HostName $baseUri.DnsSafeHost -Port $basePort
     $null = Invoke-JsonApi -Method Get -Uri "$BaseUrl/api/v1/rooms"
 
-    $stamp = Get-Date -Format "yyyyMMddHHmmssfff"
-    $userName = "bench$stamp"
-    $email = "$userName@example.com"
-    $password = "Benchmark123!"
-
-    Write-Step "Registering $email"
-    $registerResult = Invoke-JsonApi `
-        -Method Post `
-        -Uri "$BaseUrl/api/v1/auth/register" `
-        -Body @{
-            username = $userName
-            email    = $email
-            password = $password
+    if ($RoomId -gt 0) {
+        $script:BenchmarkRoomId = $RoomId
+        $script:BenchmarkSid = $SessionId
+        if ($sendingEnabled -and [string]::IsNullOrWhiteSpace($script:BenchmarkSid)) {
+            throw "-SessionId is required when sending messages to an existing -RoomId"
         }
-    if ($null -eq $registerResult.data.user_id -or [uint64]$registerResult.data.user_id -eq 0) {
-        $registerJson = $registerResult | ConvertTo-Json -Depth 10 -Compress
-        throw "Registration response did not contain a valid user_id. Response: $registerJson"
+        Set-TestSessionCookie -Sid $script:BenchmarkSid
+
+        Write-Step "Checking existing live room $($script:BenchmarkRoomId)"
+        $roomDetail = Invoke-JsonApi -Method Get -Uri "$BaseUrl/api/v1/rooms/$($script:BenchmarkRoomId)"
+        if ([int]$roomDetail.data.status -ne 1) {
+            throw "Room $($script:BenchmarkRoomId) is not live (status=$($roomDetail.data.status))"
+        }
+    }
+    else {
+        $stamp = Get-Date -Format "yyyyMMddHHmmssfff"
+        $userName = "bench$stamp"
+        $email = "$userName@example.com"
+        $password = "Benchmark123!"
+
+        Write-Step "Registering $email"
+        $registerResult = Invoke-JsonApi `
+            -Method Post `
+            -Uri "$BaseUrl/api/v1/auth/register" `
+            -Body @{
+                username = $userName
+                email    = $email
+                password = $password
+            }
+        if ($null -eq $registerResult.data.user_id -or [uint64]$registerResult.data.user_id -eq 0) {
+            $registerJson = $registerResult | ConvertTo-Json -Depth 10 -Compress
+            throw "Registration response did not contain a valid user_id. Response: $registerJson"
+        }
+
+        Write-Step "Logging in and extracting sid"
+        $loginResponse = Invoke-WebRequest `
+            -UseBasicParsing `
+            -Method Post `
+            -Uri "$BaseUrl/api/v1/auth/login" `
+            -ContentType "application/json" `
+            -Body (@{ email = $email; password = $password } | ConvertTo-Json -Compress)
+
+        $setCookie = $loginResponse.Headers["Set-Cookie"] -join ";"
+        $sidMatch = [regex]::Match($setCookie, "sid=([^;]+)")
+        if (-not $sidMatch.Success) {
+            throw "Login response did not contain a sid cookie"
+        }
+        $script:BenchmarkSid = $sidMatch.Groups[1].Value
+        Set-TestSessionCookie -Sid $script:BenchmarkSid
+
+        $me = Invoke-JsonApi `
+            -Method Get `
+            -Uri "$BaseUrl/api/v1/auth/me" `
+            -Sid $script:BenchmarkSid
+        if ($null -eq $me.data.user_id -or [uint64]$me.data.user_id -eq 0) {
+            throw "Session verification failed"
+        }
+
+        Write-Step "Creating benchmark room"
+        $createRoomResult = Invoke-JsonApi `
+            -Method Post `
+            -Uri "$BaseUrl/api/v1/rooms" `
+            -Sid $script:BenchmarkSid `
+            -Body @{ title = "Benchmark Room $stamp" }
+        $script:BenchmarkRoomId = [uint64]$createRoomResult.data.room_id
+        if ($script:BenchmarkRoomId -eq 0) {
+            $createRoomJson = $createRoomResult | ConvertTo-Json -Depth 10 -Compress
+            throw "Create-room response did not contain a valid room_id. Response: $createRoomJson"
+        }
+
+        Write-Step "Preparing room $($script:BenchmarkRoomId)"
+        $startResult = Invoke-JsonApi `
+            -Method Post `
+            -Uri "$BaseUrl/api/v1/rooms/$($script:BenchmarkRoomId)/start" `
+            -Sid $script:BenchmarkSid `
+            -Body @{ room_title = "Benchmark Room $stamp" }
+        $script:RoomStarted = $true
+        Start-TestPublisher -Credentials $startResult.data
+        Write-Step "Waiting for SRS on_publish callback"
+        Wait-RoomLive -TargetRoomId $script:BenchmarkRoomId
     }
 
-    Write-Step "Logging in and extracting sid"
-    $loginResponse = Invoke-WebRequest `
-        -UseBasicParsing `
-        -Method Post `
-        -Uri "$BaseUrl/api/v1/auth/login" `
-        -ContentType "application/json" `
-        -Body (@{ email = $email; password = $password } | ConvertTo-Json -Compress)
-
-    $setCookie = $loginResponse.Headers["Set-Cookie"] -join ";"
-    $sidMatch = [regex]::Match($setCookie, "sid=([^;]+)")
-    if (-not $sidMatch.Success) {
-        throw "Login response did not contain a sid cookie"
-    }
-    $script:Sid = $sidMatch.Groups[1].Value
-    if ($script:Sid -notmatch "^[0-9a-fA-F]{64}$") {
-        throw "Login response contained an invalid sid value (length=$($script:Sid.Length))"
-    }
-
-    # Windows PowerShell 可能会丢弃手动提供的 Cookie 请求头。
-    # 将 sid 放入 CookieContainer，并把客户端副本标记为非 Secure，
-    # 以便通过本地 HTTP SSH 隧道发送。服务端 Cookie 仍保持 Secure，供浏览器使用。
-    $sessionCookie = New-Object System.Net.Cookie("sid", $script:Sid, "/")
-    $sessionCookie.Secure = $false
-    $script:WebSession.Cookies.Add([Uri]$BaseUrl, $sessionCookie)
-
-    $me = Invoke-JsonApi `
-        -Method Get `
-        -Uri "$BaseUrl/api/v1/auth/me" `
-        -Sid $script:Sid
-    if ($null -eq $me.data.user_id -or [uint64]$me.data.user_id -eq 0) {
-        throw "Session verification failed"
-    }
-
-    Write-Step "Creating benchmark room"
-    $createRoomResult = Invoke-JsonApi `
-        -Method Post `
-        -Uri "$BaseUrl/api/v1/rooms" `
-        -Sid $script:Sid `
-        -Body @{ title = "Benchmark Room $stamp" }
-    $script:RoomId = [uint64]$createRoomResult.data.room_id
-    if ($script:RoomId -eq 0) {
-        $createRoomJson = $createRoomResult | ConvertTo-Json -Depth 10 -Compress
-        throw "Create-room response did not contain a valid room_id. Response: $createRoomJson"
-    }
-
-    Write-Step "Starting room $($script:RoomId)"
-    $null = Invoke-JsonApi `
-        -Method Post `
-        -Uri "$BaseUrl/api/v1/rooms/$($script:RoomId)/start" `
-        -Sid $script:Sid `
-        -Body @{ room_title = "Benchmark Room $stamp" }
-    $script:RoomStarted = $true
-
-    $benchmarkResult = Invoke-Benchmark -RoomId $script:RoomId -Sid $script:Sid
+    $benchmarkResult = Invoke-Benchmark -RoomId $script:BenchmarkRoomId -Sid $script:BenchmarkSid
 
     if (-not $SkipHistoryCheck -and $sendingEnabled) {
-        $historyCount = Test-History -RoomId $script:RoomId
+        $historyCount = Test-History -RoomId $script:BenchmarkRoomId
     }
 
     $testSucceeded = $true
 }
 finally {
-    if ($script:RoomStarted -and -not $KeepRoomLive) {
-        Write-Step "Stopping room $($script:RoomId)"
+    if ($script:RoomStarted -and (-not $KeepRoomLive -or -not $testSucceeded)) {
+        Write-Step "Stopping room $($script:BenchmarkRoomId)"
         try {
             $null = Invoke-JsonApi `
                 -Method Post `
-                -Uri "$BaseUrl/api/v1/rooms/$($script:RoomId)/stop" `
-                -Sid $script:Sid
+                -Uri "$BaseUrl/api/v1/rooms/$($script:BenchmarkRoomId)/stop" `
+                -Sid $script:BenchmarkSid
         }
         catch {
-            Write-Warning "Failed to stop room $($script:RoomId): $($_.Exception.Message)"
+            Write-Warning "Failed to stop room $($script:BenchmarkRoomId): $($_.Exception.Message)"
         }
+    }
+
+    if ($null -ne $script:PublisherProcess -and -not $script:PublisherProcess.HasExited -and (-not $KeepRoomLive -or -not $testSucceeded)) {
+        Write-Step "Stopping FFmpeg publisher"
+        Stop-Process -Id $script:PublisherProcess.Id
+        $script:PublisherProcess.WaitForExit(5000)
     }
 
     if ($null -ne $script:TunnelProcess -and -not $script:TunnelProcess.HasExited) {
@@ -533,17 +725,23 @@ if (-not $testSucceeded) {
 }
 
 Write-Host "`nAUTOMATED LOAD TEST PASSED" -ForegroundColor Green
-Write-Host "Room ID: $($script:RoomId)"
+Write-Host "Room ID: $($script:BenchmarkRoomId)"
 Write-Host "Peak connections: $($benchmarkResult.PeakConnections)"
 Write-Host "Dial succeeded: $($benchmarkResult.DialSucceeded)/$($benchmarkResult.DialAttempted)"
 Write-Host "Sent: $($benchmarkResult.Sent)"
-Write-Host "Received: $($benchmarkResult.Received)"
+Write-Host "Server accepted/rejected: $($benchmarkResult.Accepted)/$($benchmarkResult.Rejected)"
+Write-Host "Realtime received: $($benchmarkResult.RealtimeReceived)"
+Write-Host "Recovered by replay: $($benchmarkResult.Recovered)"
+Write-Host "Final unique received: $($benchmarkResult.Received)"
 Write-Host "Expected deliveries: $($benchmarkResult.Expected)"
-Write-Host "Missing deliveries: $($benchmarkResult.Missing)"
-Write-Host "Loss: $($benchmarkResult.LossPercent.ToString('0.######', [System.Globalization.CultureInfo]::InvariantCulture))%"
+Write-Host "Realtime missing/loss: $($benchmarkResult.RealtimeMissing) / $($benchmarkResult.RealtimeLossPercent.ToString('0.######', [System.Globalization.CultureInfo]::InvariantCulture))%"
+Write-Host "Final missing/loss: $($benchmarkResult.Missing) / $($benchmarkResult.LossPercent.ToString('0.######', [System.Globalization.CultureInfo]::InvariantCulture))%"
 Write-Host "ACK sent: $($benchmarkResult.AckSent)"
 Write-Host "Resync required: $($benchmarkResult.ResyncRequired)"
-Write-Host "Recovered by replay: $($benchmarkResult.Recovered)"
-Write-Host "Latency samples: $($benchmarkResult.LatencySamples)"
-Write-Host "Latency P50/P95/P99: $($benchmarkResult.LatencyP50) / $($benchmarkResult.LatencyP95) / $($benchmarkResult.LatencyP99)"
+Write-Host "Realtime latency P50/P95/P99: $($benchmarkResult.RealtimeLatencyP50) / $($benchmarkResult.RealtimeLatencyP95) / $($benchmarkResult.RealtimeLatencyP99)"
+Write-Host "Final latency P50/P95/P99: $($benchmarkResult.LatencyP50) / $($benchmarkResult.LatencyP95) / $($benchmarkResult.LatencyP99)"
 Write-Host "History matches: $historyCount"
+Write-Host "Benchmark log: $($benchmarkResult.BenchmarkLog)"
+if ($KeepRoomLive -and $null -ne $script:PublisherProcess -and -not $script:PublisherProcess.HasExited) {
+    Write-Host "FFmpeg publisher left running: PID $($script:PublisherProcess.Id)"
+}

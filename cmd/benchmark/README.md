@@ -10,10 +10,10 @@
 go run ./cmd/benchmark -c 60000 -r 1s -room 1 -origin http://localhost:5173
 ```
 
-同时测试弹幕发送时，需要先登录并把 Cookie 中的 `sid` 传入。所有压测连接会复用这个测试账号的 Session：
+同时测试弹幕发送时，需要先登录并把 Cookie 中的 `sid` 传入。建议只设置一个发送连接，其余连接作为观众接收广播：
 
 ```powershell
-go run ./cmd/benchmark -c 60000 -r 1s -room 1 -origin http://localhost:5173 -sid "<SID>" -active 0.001
+go run ./cmd/benchmark -c 60000 -r 1s -room 1 -origin http://localhost:5173 -sid "<SID>" -active-clients 1
 ```
 
 常用参数：
@@ -23,10 +23,13 @@ go run ./cmd/benchmark -c 60000 -r 1s -room 1 -origin http://localhost:5173 -sid
 - `-room`：房间 ID，默认 1。
 - `-r`：活跃客户端的平均发送间隔，默认 1 秒。
 - `-active`：发送消息的客户端比例，默认 0.001；未提供 `-sid` 时自动降为 0。
+- `-active-clients`：精确指定发送连接数；项目按用户和房间限制弹幕频率，复用同一个 `sid` 时不要用它模拟多个独立用户。
 - `-ramp`：建立相邻连接的间隔，默认 1 毫秒。
 - `-d`：持续时间，默认 0，表示运行到 Ctrl+C。
 
-每条压测弹幕都会带上发送时间。周期和最终输出提供固定桶估算的 `latency_p50`、`latency_p95`、`latency_p99`，以及参与延迟统计的 `latency_samples`；统计过程不会保存逐条延迟样本。
+每条压测弹幕都会带上发送时间。最终结果按服务端返回的 `accepted` 计算理论投递数：`expected = accepted × 测试开始时的稳定连接数`，被限流或 Kafka 写入失败的 `rejected` 不再错误计入理论投递数。`realtime_received` 是 WebSocket 实时收到的唯一消息数，`recovered` 是补拉恢复数，`received` 是两者去重后的最终送达数。
+
+延迟也拆成实时、补拉和合并三组固定桶直方图。`realtime_latency_p95` 更适合判断实时体验，合并后的 `latency_p95` 会包含补拉耗时。统计过程不会保存逐条延迟样本。
 
 ACK 协议成本测试可以增加 `-ack-every 50`。每个客户端每处理约 50 条带 `room_seq` 的弹幕后确认已看到的最大 Kafka 游标；该游标对单房间递增，但多个房间共享分区时允许不连续。默认值 `0` 不发送 ACK，也是纯扇出测试的推荐值。压测弹幕同时携带客户端生成的 UUID `message_id`，用于验证服务端幂等链路。最终输出中的 `resync_required` 统计服务端发出的重同步控制消息。
 

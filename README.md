@@ -109,6 +109,14 @@ go mod download
 go run .
 ```
 
+Linux 服务器不需要通过 VSCode 启动。SSH 登录并进入项目目录后，可以构建 Linux ELF 并以前台进程运行：
+
+```bash
+bash scripts/start-backend.sh --start-dependencies
+```
+
+脚本先构建无扩展名的 `bin/live-stream-server`，再以前台进程运行；按 `Ctrl+C` 停止。依赖已经启动时省略 `--start-dependencies`，代码未变化时可加 `--skip-build`。正式或长期运行建议交给 systemd，并把直播相关环境变量放在仅服务账号可读的 EnvironmentFile 中。
+
 后端监听 `http://127.0.0.1:9000`，启动时会自动创建和更新开发环境所需的数据表。Kafka、MySQL 或 Redis 未就绪时，后端可能直接退出；先用 `docker compose ps` 和容器日志确认依赖状态。
 
 ### 3. 启动前端

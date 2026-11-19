@@ -407,20 +407,20 @@ function Invoke-LoadProfiles {
         "Standard" {
             @(
                 [pscustomobject]@{ Name = "baseline-100x1"; Connections = 100; Active = 1; Duration = "20s"; Ramp = "5ms"; Drain = "10s" },
-                [pscustomobject]@{ Name = "standard-1000x10"; Connections = 1000; Active = 10; Duration = "30s"; Ramp = "2ms"; Drain = "15s" }
+                [pscustomobject]@{ Name = "standard-1000x1"; Connections = 1000; Active = 1; Duration = "30s"; Ramp = "2ms"; Drain = "15s" }
             )
         }
         "Stress" {
             @(
-                [pscustomobject]@{ Name = "standard-1000x10"; Connections = 1000; Active = 10; Duration = "45s"; Ramp = "2ms"; Drain = "20s" },
-                [pscustomobject]@{ Name = "stress-5000x10"; Connections = 5000; Active = 10; Duration = "1m"; Ramp = "1ms"; Drain = "30s" }
+                [pscustomobject]@{ Name = "standard-1000x1"; Connections = 1000; Active = 1; Duration = "45s"; Ramp = "2ms"; Drain = "20s" },
+                [pscustomobject]@{ Name = "stress-5000x1"; Connections = 5000; Active = 1; Duration = "1m"; Ramp = "1ms"; Drain = "30s" }
             )
         }
         "Extreme" {
             @(
-                [pscustomobject]@{ Name = "standard-1000x10"; Connections = 1000; Active = 10; Duration = "45s"; Ramp = "2ms"; Drain = "20s" },
-                [pscustomobject]@{ Name = "stress-5000x10"; Connections = 5000; Active = 10; Duration = "1m"; Ramp = "1ms"; Drain = "30s" },
-                [pscustomobject]@{ Name = "extreme-10000x10"; Connections = 10000; Active = 10; Duration = "2m"; Ramp = "1ms"; Drain = "1m" }
+                [pscustomobject]@{ Name = "standard-1000x1"; Connections = 1000; Active = 1; Duration = "45s"; Ramp = "2ms"; Drain = "20s" },
+                [pscustomobject]@{ Name = "stress-5000x1"; Connections = 5000; Active = 1; Duration = "1m"; Ramp = "1ms"; Drain = "30s" },
+                [pscustomobject]@{ Name = "extreme-10000x1"; Connections = 10000; Active = 1; Duration = "2m"; Ramp = "1ms"; Drain = "1m" }
             )
         }
     }

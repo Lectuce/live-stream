@@ -4,6 +4,7 @@ live-stream
 .vscode/
 .env
 /test-results/
+/bin/
 /storage/videos/
 /storage/post-images/
 /docs/
