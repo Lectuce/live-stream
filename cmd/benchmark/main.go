@@ -39,6 +39,7 @@ type metrics struct {
 	dialAttempted   atomic.Int64
 	dialSucceeded   atomic.Int64
 	dialFailed      atomic.Int64
+	readFailed      atomic.Int64
 	sent            atomic.Int64
 	accepted        atomic.Int64
 	rejected        atomic.Int64
@@ -482,7 +483,7 @@ func runClient(
 
 	var writeMu sync.Mutex
 	readDone := make(chan struct{})
-	go readMessages(ctx, conn, stats, readDone, &writeMu, roomID, ackEvery, replayBaseURL, target)
+	go readMessages(ctx, conn, stats, readDone, &writeMu, roomID, clientID, ackEvery, replayBaseURL, target)
 
 	if !isTalker {
 		select {
@@ -590,6 +591,7 @@ func readMessages(
 	done chan<- struct{},
 	writeMu *sync.Mutex,
 	roomID uint64,
+	clientID int,
 	ackEvery int,
 	replayBaseURL string,
 	webSocketTarget string,
@@ -614,6 +616,16 @@ func readMessages(
 		if err != nil {
 			if ctx.Err() == nil && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				stats.errors.Add(1)
+				failureNumber := stats.readFailed.Add(1)
+				if failureNumber <= 20 {
+					log.Printf(
+						"[READ ERROR %d/20] client=%d target=%s err=%v",
+						failureNumber,
+						clientID,
+						webSocketTarget,
+						err,
+					)
+				}
 			}
 			return
 		}
@@ -906,7 +918,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 				loss = float64(lag) / float64(expected) * 100
 			}
 			log.Printf(
-				"[STATS] elapsed=%s conns=%d peak=%d dials=%d/%d sent_delta=%d accepted=%d rejected=%d realtime=%d recv_delta=%d recovered=%d ack_delta=%d frames=%d lag=%d loss=%.2f%% errors=%d latency_p50=%s latency_p95=%s latency_p99=%s",
+				"[STATS] elapsed=%s conns=%d peak=%d dials=%d/%d sent_delta=%d accepted=%d rejected=%d realtime=%d recv_delta=%d recovered=%d ack_delta=%d frames=%d lag=%d loss=%.2f%% errors=%d read_failed=%d latency_p50=%s latency_p95=%s latency_p99=%s",
 				time.Since(startedAt).Round(time.Second),
 				stats.connected.Load(),
 				stats.peakConnected.Load(),
@@ -923,6 +935,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 				lag,
 				loss,
 				stats.errors.Load(),
+				stats.readFailed.Load(),
 				stats.latency.percentile(0.50),
 				stats.latency.percentile(0.95),
 				stats.latency.percentile(0.99),
@@ -937,7 +950,7 @@ func monitor(ctx context.Context, stats *metrics, startedAt time.Time, interval 
 func printFinal(stats *metrics, startedAt time.Time) {
 	duration := time.Since(startedAt)
 	log.Printf(
-		"[FINAL] duration=%s conns=%d audience=%d sent=%d accepted=%d rejected=%d realtime_received=%d recovered=%d received=%d frames=%d expected=%d errors=%d unexpected_disconnects=%d peak_conns=%d dial_attempted=%d dial_succeeded=%d dial_failed=%d ack_sent=%d resync_required=%d latency_samples=%d latency_p50=%s latency_p95=%s latency_p99=%s realtime_latency_samples=%d realtime_latency_p50=%s realtime_latency_p95=%s realtime_latency_p99=%s recovery_latency_samples=%d recovery_latency_p50=%s recovery_latency_p95=%s recovery_latency_p99=%s",
+		"[FINAL] duration=%s conns=%d audience=%d sent=%d accepted=%d rejected=%d realtime_received=%d recovered=%d received=%d frames=%d expected=%d errors=%d unexpected_disconnects=%d read_failed=%d peak_conns=%d dial_attempted=%d dial_succeeded=%d dial_failed=%d ack_sent=%d resync_required=%d latency_samples=%d latency_p50=%s latency_p95=%s latency_p99=%s realtime_latency_samples=%d realtime_latency_p50=%s realtime_latency_p95=%s realtime_latency_p99=%s recovery_latency_samples=%d recovery_latency_p50=%s recovery_latency_p95=%s recovery_latency_p99=%s",
 		duration.Round(time.Millisecond),
 		stats.connected.Load(),
 		stats.audience.Load(),
@@ -951,6 +964,7 @@ func printFinal(stats *metrics, startedAt time.Time) {
 		stats.expected.Load(),
 		stats.errors.Load(),
 		stats.unexpectedExit.Load(),
+		stats.readFailed.Load(),
 		stats.peakConnected.Load(),
 		stats.dialAttempted.Load(),
 		stats.dialSucceeded.Load(),

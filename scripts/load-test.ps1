@@ -376,7 +376,7 @@ function Invoke-Benchmark {
                 $lines = @(Get-Content -LiteralPath $benchmarkLog)
                 for ($index = $reportedLineCount; $index -lt $lines.Count; $index++) {
                     $line = $lines[$index].ToString()
-                    if ($line -match "\[(BENCHMARK|STATS|FINAL|WARN|DIAL ERROR|REPLAY ERROR)\]") {
+                    if ($line -match "\[(BENCHMARK|STATS|FINAL|WARN|DIAL ERROR|READ ERROR|REPLAY ERROR)\]") {
                         Write-Host $line
                     }
                 }
@@ -392,7 +392,7 @@ function Invoke-Benchmark {
             $lines = @(Get-Content -LiteralPath $benchmarkLog)
             for ($index = $reportedLineCount; $index -lt $lines.Count; $index++) {
                 $line = $lines[$index].ToString()
-                if ($line -match "\[(BENCHMARK|STATS|FINAL|WARN|DIAL ERROR|REPLAY ERROR)\]") {
+                if ($line -match "\[(BENCHMARK|STATS|FINAL|WARN|DIAL ERROR|READ ERROR|REPLAY ERROR)\]") {
                     Write-Host $line
                 }
             }
@@ -426,7 +426,7 @@ function Invoke-Benchmark {
 
     $metricsMatch = [regex]::Match(
         $finalLine,
-        "sent=(?<sent>\d+) accepted=(?<accepted>\d+) rejected=(?<rejected>\d+) realtime_received=(?<realtime>\d+) recovered=(?<recovered>\d+) received=(?<received>\d+) frames=(?<frames>\d+) expected=(?<expected>\d+) errors=(?<errors>\d+) unexpected_disconnects=(?<unexpected>\d+)"
+        "sent=(?<sent>\d+) accepted=(?<accepted>\d+) rejected=(?<rejected>\d+) realtime_received=(?<realtime>\d+) recovered=(?<recovered>\d+) received=(?<received>\d+) frames=(?<frames>\d+) expected=(?<expected>\d+) errors=(?<errors>\d+) unexpected_disconnects=(?<unexpected>\d+) read_failed=(?<readfailed>\d+)"
     )
     if (-not $metricsMatch.Success) {
         throw "Unable to parse benchmark metrics: $finalLine"
@@ -490,6 +490,7 @@ function Invoke-Benchmark {
 		$realtimeLossPercent = $realtimeMissing * 100.0 / $expected
 	}
 	$unexpectedDisconnects = [int64]$metricsMatch.Groups["unexpected"].Value
+	$readFailed = [int64]$metricsMatch.Groups["readfailed"].Value
     $audience = [int64]$audienceMatch.Groups["audience"].Value
     $peakConnections = [int64]$connectionMatch.Groups["peak"].Value
     $dialAttempted = [int64]$connectionMatch.Groups["attempted"].Value
@@ -570,6 +571,7 @@ function Invoke-Benchmark {
 		ResyncRequired  = $resyncRequired
 		Recovered       = $recovered
 		UnexpectedDisconnects = $unexpectedDisconnects
+		ReadFailed      = $readFailed
 		LatencySamples  = $latencySamples
 		LatencyP50      = $latencyP50
 		LatencyP95      = $latencyP95
@@ -766,6 +768,7 @@ Write-Host "`nAUTOMATED LOAD TEST PASSED" -ForegroundColor Green
 Write-Host "Room ID: $($script:BenchmarkRoomId)"
 Write-Host "Peak connections: $($benchmarkResult.PeakConnections)"
 Write-Host "Dial succeeded: $($benchmarkResult.DialSucceeded)/$($benchmarkResult.DialAttempted)"
+Write-Host "Unexpected disconnects/read failures: $($benchmarkResult.UnexpectedDisconnects)/$($benchmarkResult.ReadFailed)"
 Write-Host "Sent: $($benchmarkResult.Sent)"
 Write-Host "Server accepted/rejected: $($benchmarkResult.Accepted)/$($benchmarkResult.Rejected)"
 Write-Host "Realtime received: $($benchmarkResult.RealtimeReceived)"
