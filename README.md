@@ -276,6 +276,38 @@ go run ./cmd/benchmark \
   -d 30s
 ```
 
+服务器没有独立压测机时，可以使用自动化单机回环压测。后端、SRS、
+MySQL、Redis 和 Kafka 需要已经启动，并且服务器需要安装 `ffmpeg`、
+`tmux`、`curl`、`python3` 和 Go：
+
+```bash
+bash scripts/start-loopback-load-test.sh \
+  --connections 1000,1500,2000,2500,3000 \
+  --repeats 3 \
+  --duration 2m \
+  --send-interval 2s \
+  --max-p95-latency 500ms
+```
+
+启动脚本会创建独立的 tmux 会话，因此关闭 VSCode 或断开 SSH 不会中断
+压测。主脚本会自动注册临时账号、创建直播间、启动低码率本地推流，并在
+每个连接档位依次执行“只维持连接”和“一个客户端发送弹幕”两种测试。
+默认遇到第一档失败就停止；需要收集后续档位数据时增加
+`--continue-on-failure`。运行结果保存在
+`test-results/loopback-时间/`，其中 `summary.tsv` 是汇总，单档日志、进程
+资源数据和压测前后的 WebSocket 指标也会分别保留。
+
+启动命令会打印实际 tmux 会话名和结果目录。常用查看方式：
+
+```bash
+tmux attach -t <会话名>                  # 实时查看；Ctrl+B 后按 D 退出
+tmux capture-pane -p -t <会话名> -S -50 # 不进入会话查看最近输出
+tail -f test-results/loopback-*/run.log  # 查看持久化日志
+```
+
+回环压测绕过公网带宽，但压测程序会和后端共用同一台机器的 CPU 与内存，
+因此结果应表述为“单机回环容量”，不能直接等同于公网生产容量。
+
 ## 目录结构
 
 ```text
