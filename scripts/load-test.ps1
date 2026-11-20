@@ -251,6 +251,9 @@ function Wait-RoomLive {
 function Start-TestPublisher {
     param([object]$Credentials)
 
+    if ([string]::IsNullOrWhiteSpace($FFmpegPath)) {
+        throw "-FFmpegPath is empty. Recreate the `$FFmpegExe variable or pass the full path to ffmpeg.exe."
+    }
     $ffmpeg = Get-Command $FFmpegPath -ErrorAction SilentlyContinue
     if ($null -eq $ffmpeg) {
         throw "FFmpeg was not found. Install it or pass its executable path with -FFmpegPath; alternatively test an already-live room with -RoomId."
