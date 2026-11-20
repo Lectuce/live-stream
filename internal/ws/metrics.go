@@ -57,6 +57,8 @@ type hubMetrics struct {
 	broadcastDuration         durationHistogram
 	fanoutShardDuration       durationHistogram
 	realtimeMessageAge        durationHistogram
+	clientQueueWaitDuration   durationHistogram
+	socketWriteDuration       durationHistogram
 }
 
 type durationHistogramSnapshot struct {
@@ -83,6 +85,8 @@ type MetricsSnapshot struct {
 	BroadcastDuration         durationHistogramSnapshot `json:"ws_broadcast_duration"`
 	FanoutShardDuration       durationHistogramSnapshot `json:"ws_fanout_shard_duration"`
 	RealtimeMessageAge        durationHistogramSnapshot `json:"ws_realtime_message_age"`
+	ClientQueueWaitDuration   durationHistogramSnapshot `json:"ws_client_queue_wait_duration"`
+	SocketWriteDuration       durationHistogramSnapshot `json:"ws_socket_write_duration"`
 	ClientQueueDepth          int64                     `json:"ws_client_queue_depth"`
 }
 
@@ -90,6 +94,8 @@ func (h *Hub) MetricsSnapshot() MetricsSnapshot {
 	broadcastHistogram := snapshotDurationHistogram(&h.metrics.broadcastDuration)
 	fanoutHistogram := snapshotDurationHistogram(&h.metrics.fanoutShardDuration)
 	realtimeAgeHistogram := snapshotDurationHistogram(&h.metrics.realtimeMessageAge)
+	clientQueueWaitHistogram := snapshotDurationHistogram(&h.metrics.clientQueueWaitDuration)
+	socketWriteHistogram := snapshotDurationHistogram(&h.metrics.socketWriteDuration)
 
 	hotRoomPolicies := h.hotRoomPolicies()
 	return MetricsSnapshot{
@@ -110,6 +116,8 @@ func (h *Hub) MetricsSnapshot() MetricsSnapshot {
 		BroadcastDuration:         broadcastHistogram,
 		FanoutShardDuration:       fanoutHistogram,
 		RealtimeMessageAge:        realtimeAgeHistogram,
+		ClientQueueWaitDuration:   clientQueueWaitHistogram,
+		SocketWriteDuration:       socketWriteHistogram,
 		ClientQueueDepth:          h.clientQueueDepth(),
 	}
 }

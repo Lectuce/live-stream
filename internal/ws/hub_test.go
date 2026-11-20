@@ -3,7 +3,9 @@ package ws
 import (
 	"encoding/json"
 	"live-stream/internal/model"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -345,6 +347,8 @@ func TestMetricsHandler(t *testing.T) {
 	client := NewClient(hub, nil, 1, 1, "tester")
 	hub.handleRegister(client)
 	hub.broadcastToRoom(&Message{RoomID: 1, Type: "danma", Content: "hello"})
+	hub.metrics.clientQueueWaitDuration.observe(25 * time.Millisecond)
+	hub.metrics.socketWriteDuration.observe(10 * time.Millisecond)
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest("GET", "/debug/ws/metrics", nil)
@@ -362,6 +366,76 @@ func TestMetricsHandler(t *testing.T) {
 	if snapshot.BroadcastDuration.Count != 1 {
 		t.Fatalf("broadcast duration count = %d, want 1", snapshot.BroadcastDuration.Count)
 	}
+	if snapshot.ClientQueueWaitDuration.Count != 1 {
+		t.Fatalf("client queue wait duration count = %d, want 1", snapshot.ClientQueueWaitDuration.Count)
+	}
+	if snapshot.SocketWriteDuration.Count != 1 {
+		t.Fatalf("socket write duration count = %d, want 1", snapshot.SocketWriteDuration.Count)
+	}
+}
+
+func TestWritePumpRecordsDataFrameDurations(t *testing.T) {
+	type upgradeResult struct {
+		connection *websocket.Conn
+		err        error
+	}
+	upgraded := make(chan upgradeResult, 1)
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connection, err := upgrader.Upgrade(writer, request, nil)
+		upgraded <- upgradeResult{connection: connection, err: err}
+	}))
+	defer server.Close()
+
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http")
+	peer, _, err := websocket.DefaultDialer.Dial(endpoint, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer peer.Close()
+	result := <-upgraded
+	if result.err != nil {
+		t.Fatalf("upgrade websocket: %v", result.err)
+	}
+
+	hub := newHub(1)
+	client := NewClient(hub, result.connection, 1, 1, "tester")
+	defer client.closeSend()
+	pumpDone := make(chan struct{})
+	go func() {
+		client.writePump()
+		close(pumpDone)
+	}()
+
+	frame, err := websocket.NewPreparedMessage(websocket.TextMessage, []byte(`{"type":"danma"}`))
+	if err != nil {
+		t.Fatalf("prepare data frame: %v", err)
+	}
+	if got := client.trySendData(frame, 1, false, cap(client.send)); got != enqueueOK {
+		t.Fatalf("trySendData() = %v, want enqueueOK", got)
+	}
+	if err := peer.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set peer read deadline: %v", err)
+	}
+	if _, _, err := peer.ReadMessage(); err != nil {
+		t.Fatalf("read data frame: %v", err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		snapshot := hub.MetricsSnapshot()
+		if snapshot.ClientQueueWaitDuration.Count == 1 && snapshot.SocketWriteDuration.Count == 1 {
+			client.closeSend()
+			select {
+			case <-pumpDone:
+			case <-time.After(time.Second):
+				t.Fatal("write pump did not stop")
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("data frame durations were not recorded: %+v", hub.MetricsSnapshot())
 }
 
 func TestClientAcknowledgementOnlyMovesForward(t *testing.T) {

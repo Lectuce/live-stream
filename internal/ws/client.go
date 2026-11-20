@@ -505,7 +505,7 @@ func (c *Client) writePump() {
 	controlChannel := c.control
 	stateChannel := c.state
 
-	writePrepared := func(message *websocket.PreparedMessage) bool {
+	writePrepared := func(message *websocket.PreparedMessage, measureDataWrite bool) bool {
 		if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
 			if !c.isClosing() {
 				log.Printf("websocket set write deadline failed: room_id=%d connection_id=%d err=%v", c.RoomID, c.connectionID, err)
@@ -514,7 +514,9 @@ func (c *Client) writePump() {
 		}
 		startedAt := time.Now()
 		err := c.conn.WritePreparedMessage(message)
-		socketWriteDuration := time.Since(startedAt)
+		if measureDataWrite {
+			c.hub.metrics.socketWriteDuration.observe(time.Since(startedAt))
+		}
 		if err != nil {
 			if !c.isClosing() {
 				log.Printf("websocket write failed: room_id=%d connection_id=%d err=%v", c.RoomID, c.connectionID, err)
@@ -533,7 +535,7 @@ func (c *Client) writePump() {
 					controlChannel = nil
 					continue
 				}
-				if !writePrepared(message) {
+				if !writePrepared(message, false) {
 					if !c.isClosing() {
 						c.hub.metrics.writeErrorsTotal.Add(1)
 					}
@@ -550,7 +552,7 @@ func (c *Client) writePump() {
 					stateChannel = nil
 					continue
 				}
-				if !writePrepared(message) {
+				if !writePrepared(message, false) {
 					if !c.isClosing() {
 						c.hub.metrics.writeErrorsTotal.Add(1)
 					}
@@ -567,7 +569,7 @@ func (c *Client) writePump() {
 				controlChannel = nil
 				continue
 			}
-			if !writePrepared(message) {
+			if !writePrepared(message, false) {
 				if !c.isClosing() {
 					c.hub.metrics.writeErrorsTotal.Add(1)
 				}
@@ -578,7 +580,10 @@ func (c *Client) writePump() {
 				dataChannel = nil
 				continue
 			}
-			if !writePrepared(frame.message) {
+			if !frame.enqueuedAt.IsZero() {
+				c.hub.metrics.clientQueueWaitDuration.observe(time.Since(frame.enqueuedAt))
+			}
+			if !writePrepared(frame.message, true) {
 				if !c.isClosing() {
 					c.hub.metrics.writeErrorsTotal.Add(1)
 				}
@@ -592,7 +597,7 @@ func (c *Client) writePump() {
 				stateChannel = nil
 				continue
 			}
-			if !writePrepared(message) {
+			if !writePrepared(message, false) {
 				if !c.isClosing() {
 					c.hub.metrics.writeErrorsTotal.Add(1)
 				}
