@@ -42,8 +42,9 @@ const (
 )
 
 type outboundFrame struct {
-	message *websocket.PreparedMessage
-	roomSeq uint64
+	message    *websocket.PreparedMessage
+	roomSeq    uint64
+	enqueuedAt time.Time
 }
 
 type Client struct {
@@ -111,7 +112,7 @@ func (c *Client) trySendData(
 	if c.sendClosed {
 		return enqueueClosed
 	}
-	frame := outboundFrame{message: message, roomSeq: roomSeq}
+	frame := outboundFrame{message: message, roomSeq: roomSeq, enqueuedAt: time.Now()}
 	if preferLatest && highWatermark > 0 && len(c.send) >= highWatermark {
 		select {
 		case <-c.send:
@@ -511,7 +512,10 @@ func (c *Client) writePump() {
 			}
 			return false
 		}
-		if err := c.conn.WritePreparedMessage(message); err != nil {
+		startedAt := time.Now()
+		err := c.conn.WritePreparedMessage(message)
+		socketWriteDuration := time.Since(startedAt)
+		if err != nil {
 			if !c.isClosing() {
 				log.Printf("websocket write failed: room_id=%d connection_id=%d err=%v", c.RoomID, c.connectionID, err)
 			}
