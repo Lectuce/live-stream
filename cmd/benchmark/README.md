@@ -16,6 +16,24 @@ go run ./cmd/benchmark -c 60000 -r 1s -room 1 -origin http://localhost:5173
 go run ./cmd/benchmark -c 60000 -r 1s -room 1 -origin http://localhost:5173 -sid "<SID>" -active-clients 1
 ```
 
+测试多个真实发送用户时，每个发送连接必须使用不同账号的 `sid`。把这些
+session id 逐行写入文件，并按发送连接的顺序分配：
+
+```bash
+go run ./cmd/benchmark \
+  -c 8000 \
+  -room 1 \
+  -active-clients 20 \
+  -sids-file /tmp/benchmark-sids.txt \
+  -distinct-talker-ips \
+  -r 2s \
+  -d 2m
+```
+
+`-distinct-talker-ips` 会为发送端设置不同的 `X-Forwarded-For`，用于单机
+回环时模拟来自不同地址的真实用户，避免所有发送端被错误地算作同一来源。
+只有受信任代理的请求头会被后端采用。
+
 常用参数：
 
 - `-urls`：一个或多个逗号分隔的 WebSocket 地址，默认 `ws://localhost:9000/api/v1/ws`。
@@ -24,6 +42,8 @@ go run ./cmd/benchmark -c 60000 -r 1s -room 1 -origin http://localhost:5173 -sid
 - `-r`：活跃客户端的平均发送间隔，默认 1 秒。
 - `-active`：发送消息的客户端比例，默认 0.001；未提供 `-sid` 时自动降为 0。
 - `-active-clients`：精确指定发送连接数；项目按用户和房间限制弹幕频率，复用同一个 `sid` 时不要用它模拟多个独立用户。
+- `-sids-file`：每行一个 `sid`，至少包含 `-active-clients` 指定的数量。
+- `-distinct-talker-ips`：为每个发送端模拟不同来源地址，主要用于回环压测。
 - `-ramp`：建立相邻连接的间隔，默认 1 毫秒。
 - `-d`：持续时间，默认 0，表示运行到 Ctrl+C。
 

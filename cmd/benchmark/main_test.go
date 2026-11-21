@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -32,13 +34,48 @@ func TestActiveClientsAreDistributedExactly(t *testing.T) {
 	const total = 1000
 	const active = 10
 	count := 0
+	ordinals := make([]int, 0, active)
 	for clientID := 0; clientID < total; clientID++ {
-		if isActiveClient(clientID, total, active) {
+		if ordinal, ok := activeClientOrdinal(clientID, total, active); ok {
 			count++
+			ordinals = append(ordinals, ordinal)
 		}
 	}
 	if count != active {
 		t.Fatalf("selected %d active clients, want %d", count, active)
+	}
+	for ordinal, got := range ordinals {
+		if got != ordinal {
+			t.Fatalf("active ordinal %d = %d", ordinal, got)
+		}
+	}
+}
+
+func TestLoadSessionIDs(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "sids.txt")
+	first := fmt.Sprintf("%064x", 1)
+	second := fmt.Sprintf("%064x", 2)
+	if err := os.WriteFile(path, []byte(first+"\n\n"+second+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sessionIDs, err := loadSessionIDs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessionIDs) != 2 || sessionIDs[0] != first || sessionIDs[1] != second {
+		t.Fatalf("loadSessionIDs() = %#v", sessionIDs)
+	}
+}
+
+func TestBenchmarkClientIPIsDistinct(t *testing.T) {
+	seen := make(map[string]struct{})
+	for ordinal := 0; ordinal < 1000; ordinal++ {
+		address := benchmarkClientIP(ordinal)
+		if _, exists := seen[address]; exists {
+			t.Fatalf("duplicate benchmark address %q", address)
+		}
+		seen[address] = struct{}{}
 	}
 }
 

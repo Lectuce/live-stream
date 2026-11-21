@@ -282,7 +282,8 @@ MySQL、Redis 和 Kafka 需要已经启动，并且服务器需要安装 `ffmpeg
 
 ```bash
 bash scripts/start-loopback-load-test.sh \
-  --connections 1000,1500,2000,2500,3000 \
+  --connections 8000 \
+  --active-clients 1,2,5,10,20 \
   --repeats 3 \
   --duration 2m \
   --send-interval 2s \
@@ -290,8 +291,10 @@ bash scripts/start-loopback-load-test.sh \
 ```
 
 启动脚本会创建独立的 tmux 会话，因此关闭 VSCode 或断开 SSH 不会中断
-压测。主脚本会自动注册临时账号、创建直播间、启动低码率本地推流，并在
-每个连接档位依次执行“只维持连接”和“一个客户端发送弹幕”两种测试。
+压测。主脚本会为每个发送端自动注册独立账号并分配独立 `sid`，创建直播间、
+启动低码率本地推流，并在每个连接档位依次执行“只维持连接”和各个发送端
+数量的弹幕测试。回环连接还会为发送端模拟不同来源地址，避免所有用户因为
+共享 `127.0.0.1` 而触发同一个来源地址的限流。
 默认遇到第一档失败就停止；需要收集后续档位数据时增加
 `--continue-on-failure`。运行结果保存在
 `test-results/loopback-时间/`，其中 `summary.tsv` 是汇总，单档日志、进程

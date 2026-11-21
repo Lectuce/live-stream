@@ -7,6 +7,7 @@ DIAGNOSTICS_URL="http://127.0.0.1:6060"
 PUBLISH_BASE="rtmp://127.0.0.1:1935/live"
 ORIGIN="http://localhost:5173"
 CONNECTION_LEVELS="1000,1500,2000,2500,3000"
+ACTIVE_CLIENT_LEVELS="1"
 REPEATS=1
 DURATION="2m"
 DRAIN="30s"
@@ -28,18 +29,19 @@ usage() {
 Usage: bash scripts/loopback-load-test.sh [options]
 
 Runs a staged WebSocket load test entirely through 127.0.0.1. The script
-registers a temporary owner, creates a room, starts a low-bitrate FFmpeg
-publisher, then runs listener-only and one-sender stages at every connection
-level.
+registers distinct temporary users for every sender, creates a room, starts a
+low-bitrate FFmpeg publisher, then runs listener-only and multi-sender stages
+at every connection level.
 
 Options:
   --connections LIST          Comma-separated levels (default: 1000,1500,2000,2500,3000)
+  --active-clients LIST       Comma-separated distinct sender levels (default: 1)
   --repeats NUMBER            Repetitions per mode and level (default: 1)
   --duration DURATION         Message phase per stage (default: 2m)
   --drain DURATION            Drain time per stage (default: 30s)
   --ramp DURATION             Delay between connection attempts (default: 10ms)
   --warmup DURATION           Settling time after dialing (default: 2s)
-  --send-interval DURATION    One-sender message interval (default: 2s)
+  --send-interval DURATION    Per-sender message interval (default: 2s)
   --report-interval DURATION  Benchmark progress interval (default: 5s)
   --settle DURATION           Pause between stages (default: 10s)
   --max-p95-latency DURATION  Active-stage limit; empty disables (default: 500ms)
@@ -70,6 +72,7 @@ need_value() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --connections) need_value "$@"; CONNECTION_LEVELS=$2; shift 2 ;;
+    --active-clients) need_value "$@"; ACTIVE_CLIENT_LEVELS=$2; shift 2 ;;
     --repeats) need_value "$@"; REPEATS=$2; shift 2 ;;
     --duration) need_value "$@"; DURATION=$2; shift 2 ;;
     --drain) need_value "$@"; DRAIN=$2; shift 2 ;;
@@ -129,6 +132,29 @@ for level in "${LEVELS[@]}"; do
   previous_level=$level
 done
 
+IFS=',' read -r -a ACTIVE_LEVELS <<<"$ACTIVE_CLIENT_LEVELS"
+if (( ${#ACTIVE_LEVELS[@]} == 0 )); then
+  echo "--active-clients must contain at least one level" >&2
+  exit 2
+fi
+previous_active=0
+for active_clients in "${ACTIVE_LEVELS[@]}"; do
+  if [[ ! $active_clients =~ ^[1-9][0-9]*$ ]]; then
+    echo "Invalid active client level: $active_clients" >&2
+    exit 2
+  fi
+  if (( active_clients <= previous_active )); then
+    echo "Active client levels must be strictly increasing" >&2
+    exit 2
+  fi
+  if (( active_clients > LEVELS[0] )); then
+    echo "Active client level $active_clients exceeds the smallest connection level ${LEVELS[0]}" >&2
+    exit 2
+  fi
+  previous_active=$active_clients
+done
+MAX_ACTIVE_CLIENTS=${ACTIVE_LEVELS[${#ACTIVE_LEVELS[@]}-1]}
+
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 cd "$PROJECT_ROOT"
@@ -146,6 +172,7 @@ exec > >(tee -a "$REPORT_DIR/run.log") 2>&1
 
 TMP_DIR=$(mktemp -d)
 COOKIE_JAR="$TMP_DIR/owner.cookies"
+SIDS_FILE="$TMP_DIR/talker-sids.txt"
 BENCHMARK_BIN="$PROJECT_ROOT/bin/ws-benchmark"
 SUMMARY_FILE="$REPORT_DIR/summary.tsv"
 ROOM_ID=0
@@ -255,11 +282,11 @@ PY
 }
 
 validate_final() {
-  local log_file=$1 mode=$2 connections=$3 repeat=$4 result_file=$5
-  python3 - "$log_file" "$mode" "$connections" "$repeat" "$MAX_P95_LATENCY" "$result_file" <<'PY'
+  local log_file=$1 mode=$2 connections=$3 active_clients=$4 repeat=$5 result_file=$6
+  python3 - "$log_file" "$mode" "$connections" "$active_clients" "$repeat" "$MAX_P95_LATENCY" "$result_file" <<'PY'
 import json, math, re, sys
 
-log_path, mode, connections, repeat, max_p95, result_path = sys.argv[1:]
+log_path, mode, connections, active_clients, repeat, max_p95, result_path = sys.argv[1:]
 lines = open(log_path, encoding="utf-8", errors="replace").read().splitlines()
 finals = [line for line in lines if "[FINAL]" in line]
 fields = {}
@@ -320,6 +347,7 @@ result = {
     "passed": not reasons,
     "mode": mode,
     "connections": int(connections),
+    "active_clients": int(active_clients),
     "repeat": int(repeat),
     "reasons": reasons,
     "final": finals[-1] if finals else "",
@@ -331,9 +359,10 @@ with open(result_path, "w", encoding="utf-8") as output:
 status = "PASS" if not reasons else "FAIL"
 reason = "; ".join(reasons)
 print("\t".join([
-    str(connections), str(repeat), mode, status,
+    str(connections), str(active_clients), str(repeat), mode, status,
     fields.get("dial_succeeded", "0"), fields.get("dial_attempted", "0"),
-    fields.get("sent", "0"), fields.get("received", "0"), fields.get("expected", "0"),
+    fields.get("sent", "0"), fields.get("accepted", "0"), fields.get("rejected", "0"),
+    fields.get("received", "0"), fields.get("expected", "0"),
     fields.get("realtime_latency_p95", "0s"), fields.get("realtime_latency_p99", "0s"),
     reason,
 ]))
@@ -342,9 +371,10 @@ PY
 }
 
 run_stage() {
-  local connections=$1 mode=$2 repeat=$3 active_clients=0
-  [[ $mode == active ]] && active_clients=1
-  local stage="${connections}-${mode}-r${repeat}"
+  local connections=$1 active_clients=$2 repeat=$3 mode=idle
+  (( active_clients > 0 )) && mode=active
+  local stage="${connections}-idle-r${repeat}"
+  (( active_clients > 0 )) && stage="${connections}-active${active_clients}-r${repeat}"
   local log_file="$REPORT_DIR/$stage.log"
   local resource_file="$REPORT_DIR/$stage-resources.log"
   local result_file="$REPORT_DIR/$stage-result.json"
@@ -370,7 +400,7 @@ run_stage() {
     -report "$REPORT_INTERVAL"
   )
   if (( active_clients > 0 )); then
-    args+=(-sid "$OWNER_SID")
+    args+=(-sids-file "$SIDS_FILE" -distinct-talker-ips)
   fi
 
   mkfifo "$output_fifo"
@@ -400,7 +430,7 @@ run_stage() {
 
   local validation_line validation_exit
   set +e
-  validation_line=$(validate_final "$log_file" "$mode" "$connections" "$repeat" "$result_file")
+  validation_line=$(validate_final "$log_file" "$mode" "$connections" "$active_clients" "$repeat" "$result_file")
   validation_exit=$?
   set -e
   printf '%s\n' "$validation_line" | tee -a "$SUMMARY_FILE"
@@ -459,6 +489,27 @@ api_request POST /api/v1/auth/login \
 expect_status 200 "login"
 OWNER_SID=$(awk '$6 == "sid" {value=$7} END {print value}' "$COOKIE_JAR")
 [[ $OWNER_SID =~ ^[0-9a-fA-F]{64}$ ]] || die "login did not return a valid sid"
+printf '%s\n' "$OWNER_SID" >"$SIDS_FILE"
+
+if (( RUN_ACTIVE == 1 && MAX_ACTIVE_CLIENTS > 1 )); then
+  step "Creating $((MAX_ACTIVE_CLIENTS - 1)) additional message senders"
+  for (( sender=2; sender<=MAX_ACTIVE_CLIENTS; sender++ )); do
+    TALKER_NAME="lbs${USER_STAMP//-/}${sender}"
+    TALKER_EMAIL="$TALKER_NAME@example.com"
+    TALKER_COOKIE="$TMP_DIR/talker-$sender.cookies"
+
+    api_request POST /api/v1/auth/register \
+      "{\"username\":\"$TALKER_NAME\",\"email\":\"$TALKER_EMAIL\",\"password\":\"$PASSWORD\"}"
+    expect_status 200 "sender $sender registration"
+
+    api_request POST /api/v1/auth/login \
+      "{\"email\":\"$TALKER_EMAIL\",\"password\":\"$PASSWORD\"}" "$TALKER_COOKIE"
+    expect_status 200 "sender $sender login"
+    TALKER_SID=$(awk '$6 == "sid" {value=$7} END {print value}' "$TALKER_COOKIE")
+    [[ $TALKER_SID =~ ^[0-9a-fA-F]{64}$ ]] || die "sender $sender login did not return a valid sid"
+    printf '%s\n' "$TALKER_SID" >>"$SIDS_FILE"
+  done
+fi
 
 api_request POST /api/v1/rooms \
   "{\"title\":\"Loopback Benchmark $USER_STAMP\"}" "$COOKIE_JAR"
@@ -498,17 +549,17 @@ api_request GET "/api/v1/rooms/$ROOM_ID"
 [[ $API_STATUS == 200 && $(json_get "$API_BODY" data.status) == 1 ]] \
   || die "room did not become live within 60 seconds"
 
-printf 'connections\trepeat\tmode\tstatus\tdial_succeeded\tdial_attempted\tsent\treceived\texpected\tp95\tp99\treason\n' \
+printf 'connections\tactive_clients\trepeat\tmode\tstatus\tdial_succeeded\tdial_attempted\tsent\taccepted\trejected\treceived\texpected\tp95\tp99\treason\n' \
   >"$SUMMARY_FILE"
 
 step "Starting staged loopback test"
-printf 'Room: %s\nLevels: %s\nRepeats: %s\nResults: %s\n' \
-  "$ROOM_ID" "$CONNECTION_LEVELS" "$REPEATS" "$REPORT_DIR"
+printf 'Room: %s\nConnection levels: %s\nActive sender levels: %s\nRepeats: %s\nResults: %s\n' \
+  "$ROOM_ID" "$CONNECTION_LEVELS" "$ACTIVE_CLIENT_LEVELS" "$REPEATS" "$REPORT_DIR"
 
 for connections in "${LEVELS[@]}"; do
   for (( repeat=1; repeat<=REPEATS; repeat++ )); do
     if (( RUN_IDLE == 1 )); then
-      if ! run_stage "$connections" idle "$repeat"; then
+      if ! run_stage "$connections" 0 "$repeat"; then
         SUITE_FAILED=1
         if (( CONTINUE_ON_FAILURE == 0 )); then
           echo "Stopping at first failed stage: ${connections}-idle-r${repeat}" >&2
@@ -518,14 +569,16 @@ for connections in "${LEVELS[@]}"; do
       sleep "$(duration_seconds "$SETTLE")"
     fi
     if (( RUN_ACTIVE == 1 )); then
-      if ! run_stage "$connections" active "$repeat"; then
-        SUITE_FAILED=1
-        if (( CONTINUE_ON_FAILURE == 0 )); then
-          echo "Stopping at first failed stage: ${connections}-active-r${repeat}" >&2
-          exit 1
+      for active_clients in "${ACTIVE_LEVELS[@]}"; do
+        if ! run_stage "$connections" "$active_clients" "$repeat"; then
+          SUITE_FAILED=1
+          if (( CONTINUE_ON_FAILURE == 0 )); then
+            echo "Stopping at first failed stage: ${connections}-active${active_clients}-r${repeat}" >&2
+            exit 1
+          fi
         fi
-      fi
-      sleep "$(duration_seconds "$SETTLE")"
+        sleep "$(duration_seconds "$SETTLE")"
+      done
     fi
   done
 done

@@ -217,6 +217,8 @@ func main() {
 	roomID := flag.Uint64("room", 1, "existing live room ID")
 	origin := flag.String("origin", "http://localhost:5173", "Origin header allowed by the server")
 	sessionID := flag.String("sid", "", "optional sid cookie; required for bots that send messages")
+	sessionIDsFile := flag.String("sids-file", "", "optional newline-delimited sid file; assigns one distinct session to each message-sending client")
+	distinctTalkerIPs := flag.Bool("distinct-talker-ips", false, "send a distinct X-Forwarded-For address for each message-sending client")
 	activeRatio := flag.Float64("active", defaultActiveRatio, "fraction of connected clients that send messages (0..1)")
 	activeClients := flag.Int("active-clients", -1, "exact number of message-sending clients; -1 uses -active")
 	sendInterval := flag.Duration("r", defaultSendInterval, "average message interval for active clients")
@@ -268,7 +270,17 @@ func main() {
 	}
 
 	activeClientCount := resolveActiveClientCount(*clients, *activeRatio, *activeClients)
-	if *sessionID == "" && activeClientCount > 0 {
+	if *sessionID != "" && *sessionIDsFile != "" {
+		log.Fatal("-sid and -sids-file cannot be used together")
+	}
+	sessionIDs, err := loadSessionIDs(*sessionIDsFile)
+	if err != nil {
+		log.Fatalf("load -sids-file: %v", err)
+	}
+	if len(sessionIDs) > 0 && len(sessionIDs) < activeClientCount {
+		log.Fatalf("-sids-file contains %d sessions, need at least %d", len(sessionIDs), activeClientCount)
+	}
+	if *sessionID == "" && len(sessionIDs) == 0 && activeClientCount > 0 {
 		log.Printf("[WARN] -sid is empty; switching to listener-only mode")
 		activeClientCount = 0
 	}
@@ -321,15 +333,25 @@ launchLoop:
 		go func(clientID int) {
 			defer clientWG.Done()
 			target := targets[clientID%len(targets)]
+			talkerOrdinal, isTalker := activeClientOrdinal(clientID, *clients, activeClientCount)
+			clientSessionID := *sessionID
+			forwardedFor := ""
+			if isTalker && len(sessionIDs) > 0 {
+				clientSessionID = sessionIDs[talkerOrdinal]
+			}
+			if isTalker && *distinctTalkerIPs {
+				forwardedFor = benchmarkClientIP(talkerOrdinal)
+			}
 			runClient(
 				clientCtx,
 				&stats,
 				target,
 				*origin,
-				*sessionID,
+				clientSessionID,
+				forwardedFor,
 				*roomID,
 				clientID,
-				isActiveClient(clientID, *clients, activeClientCount),
+				isTalker,
 				*sendInterval,
 				*ackEvery,
 				*replayBaseURL,
@@ -377,13 +399,49 @@ func resolveActiveClientCount(total int, ratio float64, override int) int {
 	return count
 }
 
-func isActiveClient(clientID, total, activeCount int) bool {
+func activeClientOrdinal(clientID, total, activeCount int) (int, bool) {
 	if total <= 0 || activeCount <= 0 {
-		return false
+		return 0, false
 	}
 	before := int64(clientID) * int64(activeCount) / int64(total)
 	after := int64(clientID+1) * int64(activeCount) / int64(total)
-	return after > before
+	if after <= before {
+		return 0, false
+	}
+	return int(after - 1), true
+}
+
+func loadSessionIDs(path string) ([]string, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(string(contents), "\n")
+	sessionIDs := make([]string, 0, len(lines))
+	for lineNumber, line := range lines {
+		sessionID := strings.TrimSpace(line)
+		if sessionID == "" {
+			continue
+		}
+		if len(sessionID) != 64 {
+			return nil, fmt.Errorf("line %d has invalid sid length %d", lineNumber+1, len(sessionID))
+		}
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	return sessionIDs, nil
+}
+
+func benchmarkClientIP(ordinal int) string {
+	// 198.18.0.0/15 is reserved for benchmark traffic. Avoid network and
+	// broadcast-looking addresses so logs remain easy to inspect.
+	value := ordinal + 1
+	second := 18 + (value/(256*254))%2
+	third := (value / 254) % 256
+	fourth := value%254 + 1
+	return fmt.Sprintf("198.%d.%d.%d", second, third, fourth)
 }
 
 func waitFor(ctx context.Context, duration time.Duration) bool {
@@ -435,6 +493,7 @@ func runClient(
 	target string,
 	origin string,
 	sessionID string,
+	forwardedFor string,
 	roomID uint64,
 	clientID int,
 	isTalker bool,
@@ -456,6 +515,9 @@ func runClient(
 	headers := http.Header{}
 	if origin != "" {
 		headers.Set("Origin", origin)
+	}
+	if forwardedFor != "" {
+		headers.Set("X-Forwarded-For", forwardedFor)
 	}
 	if isTalker && sessionID != "" {
 		headers.Set("Cookie", "sid="+sessionID)
