@@ -53,7 +53,7 @@ func SetUpRousters(r *gin.Engine, hub *ws.Hub) {
 			rooms.GET("/:room_id/messages", func(c *gin.Context) {
 				handler.GetDanmaHistory(c)
 			})
-			rooms.GET("/:room_id/messages/replay", func(c *gin.Context) {
+			rooms.GET("/:room_id/messages/replay", middleware.ReplayLimit(), func(c *gin.Context) {
 				handler.ReplayDanmaHistory(c)
 			})
 			rooms.Use(middleware.Auth)

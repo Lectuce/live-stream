@@ -8,31 +8,39 @@ import (
 	"log"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 type Room struct {
-	clients     map[*Client]bool // 房间内的连接集合
-	shards      [fanoutShardCount]map[*Client]bool
-	onlineUsers map[uint64]uint64 // 房间内的用户在线计数（同账号多端累加）
-	likeCount   int64
-	policy      roomAdaptiveState
-	mu          sync.RWMutex // 读房间级读写锁，仅保护本房间数据
+	snapshotCounter *atomic.Uint64
+	shardSnapshots  [fanoutShardCount][]*Client
+	shardDirty      [fanoutShardCount]bool
+	clients         map[*Client]bool // 房间内的连接集合
+	shards          [fanoutShardCount]map[*Client]bool
+	onlineUsers     map[uint64]uint64 // 房间内的用户在线计数（同账号多端累加）
+	likeCount       int64
+	policy          roomAdaptiveState
+	mu              sync.RWMutex // 读房间级读写锁，仅保护本房间数据
 }
 
 const fanoutShardCount = 16
 
 type fanoutJob struct {
-	roomID  uint64
-	shard   int
-	frame   *websocket.PreparedMessage
-	roomSeq uint64
-	hot     bool
+	room     *Room
+	queuedAt time.Time
+	roomID   uint64
+	shard    int
+	frame    *websocket.PreparedMessage
+	roomSeq  uint64
+	hot      bool
 }
 
 type Hub struct {
+	workers         sync.WaitGroup
+	closeQueue      chan closeRequest
 	rooms           map[uint64]*Room // 全局房间字典， 房间ID -> 房间实例
 	broadcastQueues []chan fanoutJob // 同一房间的客户端分片映射到固定 worker
 	register        chan *Client     // 新连接入房
@@ -63,6 +71,7 @@ func newHub(workerNum int) *Hub {
 	}
 	return &Hub{
 		rooms:           make(map[uint64]*Room),
+		closeQueue:      make(chan closeRequest, 256),
 		broadcastQueues: queues,
 		register:        make(chan *Client, 512),
 		unregister:      make(chan *Client, 512),
@@ -76,7 +85,11 @@ func newHub(workerNum int) *Hub {
 }
 
 func (h *Hub) Stop() {
+	h.mu.Lock()
 	h.cancel()
+	h.mu.Unlock()
+	h.workers.Wait()
+	h.cleanupClients()
 }
 
 // SnapshotOnlineCounts 返回此网关中每个本地活跃房间的当前连接数。
@@ -105,7 +118,8 @@ func (h *Hub) broadcastWorker(queue <-chan fanoutJob) {
 			return
 		case job := <-queue:
 			startedAt := time.Now()
-			h.broadcastToShard(job.roomID, job.shard, job.frame, job.roomSeq, job.hot)
+			h.metrics.dispatchWait.observe(time.Since(job.queuedAt))
+			h.broadcastRoomShard(job.room, job.shard, job.frame, job.roomSeq, job.hot)
 			h.metrics.fanoutShardDuration.observe(time.Since(startedAt))
 		}
 	}
@@ -135,16 +149,23 @@ func (h *Hub) enqueueBroadcast(msg Message) {
 	// FIFO worker 消费，因此同一客户端不会遇到两个 worker 竞争入队
 	// 不同房间消息的情况。
 	hot := h.roomIsHot(msg.RoomID)
+	room := h.lookupRoom(msg.RoomID)
+	if room == nil {
+		return
+	}
 	for shard := 0; shard < fanoutShardCount; shard++ {
 		queue := h.broadcastQueues[h.broadcastQueueIndex(msg.RoomID, shard)]
+		queuedAt := time.Now()
 		select {
 		case queue <- fanoutJob{
+			room: room, queuedAt: queuedAt,
 			roomID:  msg.RoomID,
 			shard:   shard,
 			frame:   frame,
 			roomSeq: msg.RoomSeq,
 			hot:     hot,
 		}:
+			h.metrics.enqueueWait.observe(time.Since(queuedAt))
 		case <-h.ctx.Done():
 			return
 		}
@@ -156,12 +177,25 @@ func (h *Hub) broadcastQueueIndex(roomID uint64, shard int) int {
 }
 
 func (h *Hub) Run() {
-	for _, queue := range h.broadcastQueues {
-		go h.broadcastWorker(queue)
+	h.mu.Lock()
+	if h.ctx.Err() != nil {
+		h.mu.Unlock()
+		return
 	}
-	go h.presenceWorker()
-	go h.metricsWorker()
-
+	h.workers.Add(1)
+	start := func(fn func()) { h.workers.Add(1); go func() { defer h.workers.Done(); fn() }() }
+	start(h.closeWorker)
+	start(h.closeWorker)
+	start(h.adaptiveWorker)
+	for _, queue := range h.broadcastQueues {
+		q := queue
+		start(func() { h.broadcastWorker(q) })
+	}
+	start(h.presenceWorker)
+	start(h.metricsWorker)
+	h.mu.Unlock()
+	defer h.workers.Done()
+	defer h.cleanupClients()
 	log.Printf("hub started, workerNum=%d", h.workerNum)
 	for {
 		select {
@@ -179,13 +213,20 @@ func (h *Hub) Run() {
 
 func (h *Hub) handleRegister(client *Client) {
 	h.mu.Lock()
+	if h.ctx.Err() != nil {
+		h.mu.Unlock()
+		client.closeConnection()
+		client.closeSend()
+		return
+	}
 	room, ok := h.rooms[client.RoomID]
 	// 如果房间不存在该客户端，则初始化
 	if !ok {
 		room = &Room{
-			clients:     make(map[*Client]bool),
-			onlineUsers: make(map[uint64]uint64),
-			likeCount:   client.initialLikeCount,
+			snapshotCounter: &h.metrics.snapshotRebuilds,
+			clients:         make(map[*Client]bool),
+			onlineUsers:     make(map[uint64]uint64),
+			likeCount:       client.initialLikeCount,
 		}
 		for shard := range room.shards {
 			room.shards[shard] = make(map[*Client]bool)
@@ -197,6 +238,7 @@ func (h *Hub) handleRegister(client *Client) {
 	if _, exists := room.clients[client]; !exists {
 		room.clients[client] = true
 		room.shards[client.fanoutShard][client] = true
+		room.shardDirty[client.fanoutShard] = true
 		room.onlineUsers[client.UserID]++
 		h.metrics.connections.Add(1)
 		if room.policy.sampleStride > 1 {
@@ -207,6 +249,7 @@ func (h *Hub) handleRegister(client *Client) {
 				fanoutQPS:    room.policy.fanoutQPS,
 				sampleStride: room.policy.sampleStride,
 				latestSeq:    room.policy.latestSeq,
+				replayAfter:  room.policy.replayAfter,
 			}
 		}
 	}
@@ -236,6 +279,7 @@ func (h *Hub) handleUnregister(client *Client) {
 	}
 	delete(room.clients, client)
 	delete(room.shards[client.fanoutShard], client)
+	room.shardDirty[client.fanoutShard] = true
 	h.metrics.connections.Add(-1)
 	h.metrics.closedClientsTotal.Add(1)
 	room.onlineUsers[client.UserID]--
@@ -339,15 +383,16 @@ func (h *Hub) handleStateUpdate(msg *Message) {
 		h.mu.Unlock()
 		room.likeCount = int64(likeCount)
 		room.mu.Unlock()
-		h.broadcastOnlineCount(msg.RoomID)
+		h.markPresenceDirty(msg.RoomID)
 	case "room_status":
-		h.broadcastStateToRoom(msg)
+		h.broadcastControlToRoom(msg)
 
 	}
 
 }
 
 func (h *Hub) broadcastStateToRoom(msg *Message) {
+	h.metrics.stateBroadcasts.Add(1)
 	startedAt := time.Now()
 	h.metrics.broadcastMessagesTotal.Add(1)
 	defer func() {
@@ -365,13 +410,8 @@ func (h *Hub) broadcastStateToRoom(msg *Message) {
 			h.mu.Unlock()
 			return
 		}
-		room.mu.RLock()
 		h.mu.Unlock()
-		clients := make([]*Client, 0, len(room.shards[shard]))
-		for client := range room.shards[shard] {
-			clients = append(clients, client)
-		}
-		room.mu.RUnlock()
+		clients := room.snapshotShard(shard)
 		for _, client := range clients {
 			if client.replaceState(frame) == enqueueOK {
 				h.metrics.deliveryEnqueuedTotal.Add(1)
@@ -393,18 +433,12 @@ func (h *Hub) broadcastControlToRoom(msg *Message) {
 			h.mu.Unlock()
 			return
 		}
-		room.mu.RLock()
 		h.mu.Unlock()
-		clients := make([]*Client, 0, len(room.shards[shard]))
-		for client := range room.shards[shard] {
-			clients = append(clients, client)
-		}
-		room.mu.RUnlock()
+		clients := room.snapshotShard(shard)
 		for _, client := range clients {
 			if result := client.trySendControl(frame); result == enqueueFull {
 				h.metrics.controlQueueFullTotal.Add(1)
-				client.closeConnectionWithReason(4001, "control_queue_full")
-				client.signalUnregister()
+				h.requestClientClose(client, 4001, "control_queue_full")
 			}
 		}
 	}
@@ -448,13 +482,14 @@ func (h *Hub) broadcastToShard(
 		h.mu.Unlock()
 		return
 	}
-	room.mu.RLock()
 	h.mu.Unlock()
-	clients := make([]*Client, 0, len(room.shards[shard]))
-	for client := range room.shards[shard] {
-		clients = append(clients, client)
+	h.broadcastRoomShard(room, shard, frame, roomSeq, hot)
+}
+func (h *Hub) broadcastRoomShard(room *Room, shard int, frame *websocket.PreparedMessage, roomSeq uint64, hot bool) {
+	if room == nil {
+		return
 	}
-	room.mu.RUnlock()
+	clients := room.snapshotShard(shard)
 
 	for _, client := range clients {
 		h.enqueueClient(client, frame, roomSeq, hot)
@@ -469,8 +504,7 @@ func (h *Hub) enqueueJSON(client *Client, value any) {
 	}
 	if result := client.trySendControl(frame); result == enqueueFull {
 		h.metrics.controlQueueFullTotal.Add(1)
-		client.closeConnectionWithReason(4001, "control_queue_full")
-		client.signalUnregister()
+		h.requestClientClose(client, 4001, "control_queue_full")
 	}
 }
 
@@ -529,8 +563,7 @@ func (h *Hub) enqueueClient(
 		}
 		if disconnect {
 			h.metrics.slowClientDisconnectTotal.Add(1)
-			client.closeConnectionWithReason(4001, "resync_required")
-			client.signalUnregister()
+			h.requestClientClose(client, 4001, "resync_required")
 		}
 	}
 }

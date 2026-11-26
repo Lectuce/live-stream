@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"live-stream/internal/kafka"
+	"live-stream/internal/middleware"
 	"live-stream/internal/rousters"
 	"live-stream/internal/ws"
 )
@@ -32,6 +33,7 @@ func newDiagnosticsServer(hub *ws.Hub) *http.Server {
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	mux.Handle("/debug/ws/metrics", hub.MetricsHandler())
+	mux.Handle("/debug/replay/metrics", middleware.ReplayMetricsHandler())
 	mux.Handle("/debug/kafka/realtime", kafka.RealtimeMetricsHandler())
 	return &http.Server{Addr: "127.0.0.1:6060", Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 }

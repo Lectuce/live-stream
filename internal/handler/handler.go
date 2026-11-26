@@ -345,6 +345,11 @@ func ReplayDanmaHistory(c *gin.Context) {
 	}
 
 	data, err := service.ReplayDanmaHistory(c.Request.Context(), roomID, afterSeq, limit)
+	if err == service.ErrReplayBusy {
+		c.Header("Retry-After", "1")
+		c.JSON(429, gin.H{"message": "消息同步繁忙，请稍后重试"})
+		return
+	}
 	if err != nil {
 		log.Printf("replay danma history failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "恢复历史弹幕失败"})

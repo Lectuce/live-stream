@@ -30,6 +30,9 @@ type durationHistogram struct {
 }
 
 func (h *durationHistogram) observe(duration time.Duration) {
+	if duration < 0 {
+		return
+	}
 	h.count.Add(1)
 	h.sumNanos.Add(uint64(duration))
 	for i, upperBound := range broadcastDurationBounds {
@@ -42,6 +45,12 @@ func (h *durationHistogram) observe(duration time.Duration) {
 }
 
 type hubMetrics struct {
+	snapshotRebuilds          atomic.Uint64
+	enqueueWait               durationHistogram
+	closeQueued               atomic.Uint64
+	closeOverflow             atomic.Uint64
+	stateBroadcasts           atomic.Uint64
+	dispatchWait              durationHistogram
 	connections               atomic.Int64
 	broadcastMessagesTotal    atomic.Uint64
 	deliveryEnqueuedTotal     atomic.Uint64
@@ -68,6 +77,13 @@ type durationHistogramSnapshot struct {
 }
 
 type MetricsSnapshot struct {
+	SnapshotRebuilds          uint64                    `json:"ws_snapshot_rebuild_total"`
+	EnqueueWait               durationHistogramSnapshot `json:"ws_fanout_enqueue_wait_duration"`
+	WorkerQueueDepth          []int                     `json:"ws_worker_queue_depth"`
+	CloseQueued               uint64                    `json:"ws_close_queued_total"`
+	CloseOverflow             uint64                    `json:"ws_close_overflow_total"`
+	StateBroadcasts           uint64                    `json:"ws_state_broadcast_total"`
+	DispatchWait              durationHistogramSnapshot `json:"ws_fanout_dispatch_wait_duration"`
 	Connections               int64                     `json:"ws_connections"`
 	BroadcastMessagesTotal    uint64                    `json:"ws_broadcast_messages_total"`
 	DeliveryEnqueuedTotal     uint64                    `json:"ws_delivery_enqueued_total"`
@@ -98,7 +114,15 @@ func (h *Hub) MetricsSnapshot() MetricsSnapshot {
 	socketWriteHistogram := snapshotDurationHistogram(&h.metrics.socketWriteDuration)
 
 	hotRoomPolicies := h.hotRoomPolicies()
+	depth := make([]int, len(h.broadcastQueues))
+	for i, q := range h.broadcastQueues {
+		depth[i] = len(q)
+	}
 	return MetricsSnapshot{
+		SnapshotRebuilds: h.metrics.snapshotRebuilds.Load(),
+		EnqueueWait:      snapshotDurationHistogram(&h.metrics.enqueueWait),
+		WorkerQueueDepth: depth, CloseQueued: h.metrics.closeQueued.Load(), CloseOverflow: h.metrics.closeOverflow.Load(), StateBroadcasts: h.metrics.stateBroadcasts.Load(),
+		DispatchWait:              snapshotDurationHistogram(&h.metrics.dispatchWait),
 		Connections:               h.metrics.connections.Load(),
 		BroadcastMessagesTotal:    h.metrics.broadcastMessagesTotal.Load(),
 		DeliveryEnqueuedTotal:     h.metrics.deliveryEnqueuedTotal.Load(),

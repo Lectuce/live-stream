@@ -6,6 +6,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "build:danmaku-client": "tsc lib/danmaku-recovery.ts --target ES2022 --module ES2022 --skipLibCheck --outDir ../web",
+    "test:danmaku-recovery": "node --experimental-strip-types --test lib/danmaku-recovery.test.mjs",
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",

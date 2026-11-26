@@ -88,7 +88,16 @@ func ServeWs(hub *Hub, c *gin.Context) {
 
 	client := NewClient(hub, conn, rid, uid, uname, room.LikeCount)
 	client.ClientIP = c.ClientIP()
-	client.hub.register <- client
+	select {
+	case client.hub.register <- client:
+	case <-hub.ctx.Done():
+		client.closeConnection()
+		return
+	}
+	if hub.ctx.Err() != nil {
+		client.closeConnection()
+		return
+	}
 	go client.writePump()
 
 	// 对端离开前，升级后的连接始终由此处理函数持有。

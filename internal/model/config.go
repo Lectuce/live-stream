@@ -10,6 +10,7 @@ type Config struct {
 }
 
 type DanmakuConfig struct {
+	Replay      ReplayConfig      `yaml:"replay" mapstructure:"replay"`
 	RecentCache RecentCacheConfig `yaml:"recent_cache" mapstructure:"recent_cache"`
 	HotRoom     HotRoomConfig     `yaml:"hot_room" mapstructure:"hot_room"`
 	HotRanking  HotRankingConfig  `yaml:"hot_ranking" mapstructure:"hot_ranking"`
@@ -32,6 +33,10 @@ type RecentCacheConfig struct {
 }
 
 type HotRoomConfig struct {
+	EnterWindows int `yaml:"enter_windows" mapstructure:"enter_windows"`
+	ExitWindows  int `yaml:"exit_windows" mapstructure:"exit_windows"`
+	HoldSeconds  int `yaml:"hold_seconds" mapstructure:"hold_seconds"`
+
 	AdaptiveSamplingEnabled      bool  `yaml:"adaptive_sampling_enabled" mapstructure:"adaptive_sampling_enabled"`
 	OnlineThreshold              int   `yaml:"online_threshold" mapstructure:"online_threshold"`
 	MaxFanoutDeliveriesPerSecond int64 `yaml:"max_fanout_deliveries_per_second" mapstructure:"max_fanout_deliveries_per_second"`
@@ -56,4 +61,14 @@ type SlowClientConfig struct {
 	QueueHighWatermarkPercent   int `yaml:"queue_high_watermark_percent" mapstructure:"queue_high_watermark_percent"`
 	DisconnectStrikes           int `yaml:"disconnect_strikes" mapstructure:"disconnect_strikes"`
 	DisconnectGraceMilliseconds int `yaml:"disconnect_grace_milliseconds" mapstructure:"disconnect_grace_milliseconds"`
+}
+
+type ReplayConfig struct {
+	MaxInflight         int `yaml:"max_inflight" mapstructure:"max_inflight"`
+	MaxInflightPerRoom  int `yaml:"max_inflight_per_room" mapstructure:"max_inflight_per_room"`
+	RequestsPerSecond   int `yaml:"requests_per_second" mapstructure:"requests_per_second"`
+	Burst               int `yaml:"burst" mapstructure:"burst"`
+	TimeoutMilliseconds int `yaml:"timeout_milliseconds" mapstructure:"timeout_milliseconds"`
+	MaxPageSize         int `yaml:"max_page_size" mapstructure:"max_page_size"`
+	MaxMysqlInflight    int `yaml:"max_mysql_inflight" mapstructure:"max_mysql_inflight"`
 }

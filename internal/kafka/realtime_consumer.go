@@ -72,8 +72,10 @@ func StartRealtimeConsumer(ctx context.Context) error {
 		defer close(fetched)
 		for {
 			message, err := reader.FetchMessage(ctx)
+			handoffStarted := time.Now()
 			select {
 			case fetched <- fetchResult{message: message, err: err}:
+				realtimeMetrics.fetchHandoff.observe(time.Since(handoffStarted))
 			case <-ctx.Done():
 				return
 			}
@@ -387,6 +389,7 @@ func publishDanmaRealtimeUntilSuccess(ctx context.Context, message model.Message
 	}
 	startedAt := time.Now()
 	for attempt := 1; ; attempt++ {
+		attemptStarted := time.Now()
 		err := dao.CacheAndPublishRecentDanma(
 			ctx,
 			dao.DanmuChannel,
@@ -395,6 +398,10 @@ func publishDanmaRealtimeUntilSuccess(ctx context.Context, message model.Message
 			ttl,
 			hotMetricTTL,
 		)
+		realtimeMetrics.redisAttempt.observe(time.Since(attemptStarted))
+		if err != nil {
+			realtimeMetrics.redisFailures.Add(1)
+		}
 		if err == nil {
 			realtimeMetrics.redisPublish.observe(time.Since(startedAt))
 			realtimeMetrics.publishedTotal.Add(1)

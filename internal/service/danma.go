@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"errors"
+	"live-stream/internal/config"
 	"live-stream/internal/dao"
 	"live-stream/internal/model"
 	"live-stream/internal/repo"
 	"log"
+	"sync"
 )
 
 func GetDanmaHistory(ctx context.Context, roomID uint64, cursor uint64, limit int) (*model.MessageCursorDTO, error) {
@@ -40,16 +43,29 @@ func GetDanmaHistory(ctx context.Context, roomID uint64, cursor uint64, limit in
 	}, nil
 }
 
+var replayDatabaseSlots chan struct{}
+var replaySlotsOnce sync.Once
+var ErrReplayBusy = errors.New("replay database busy")
+
 func ReplayDanmaHistory(ctx context.Context, roomID, afterSeq uint64, limit int) (*model.MessageReplayDTO, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	if limit > 500 {
-		limit = 500
+	if limit > config.ReplaySettings().MaxPageSize {
+		limit = config.ReplaySettings().MaxPageSize
 	}
 
 	messages, covered, cacheErr := dao.SelectRecentDanmasAfterSeq(ctx, roomID, afterSeq, limit+1)
 	source := "redis"
+	// Both fallback and moderation read MySQL. Keep one shared bounded permit.
+	replaySlotsOnce.Do(func() { replayDatabaseSlots = make(chan struct{}, config.ReplaySettings().MaxMysqlInflight) })
+	select {
+	case replayDatabaseSlots <- struct{}{}:
+		defer func() { <-replayDatabaseSlots }()
+	default:
+		return nil, ErrReplayBusy
+	}
+
 	if cacheErr != nil {
 		log.Printf("read recent danmaku cache failed, fallback to mysql: %v", cacheErr)
 	}

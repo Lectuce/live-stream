@@ -1,5 +1,6 @@
 'use client';
 
+import { DanmakuRecovery } from '../lib/danmaku-recovery';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { toWebSocketBase } from '@/lib/runtime-config';
@@ -58,7 +59,7 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stableConnectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
-  const recoveringRef = useRef(false);
+  const recoveryRef = useRef<DanmakuRecovery<DanmakuMessage> | null>(null);
   const pendingLikesRef = useRef(new Map<string, boolean>());
   const pendingLikeTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const serverLikeCountRef = useRef(Math.max(0, initialLikeCount));
@@ -116,26 +117,20 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
     });
   }, []);
 
-  const recover = useCallback(async (afterSeq = lastSeqRef.current) => {
-    if (recoveringRef.current || !roomId) return;
-    // 补拉是已建立 WebSocket 后的后台同步，不能把可发送的连接临时标成
-    // recovering。热点房间每秒补拉一次，若在这里切换 connection，依赖
-    // connection 的点赞和弹幕按钮就会每秒禁用/启用一次，造成持续闪烁。
-    recoveringRef.current = true;
-    try {
-      let cursor = afterSeq;
-      for (let page = 0; page < 20; page++) {
-        const result = (await api.replay(apiBase, roomId, cursor, 200)).data;
-        append(result.items || []);
-        cursor = Math.max(cursor, result.next_seq || 0);
-        if (!result.has_more) break;
-      }
-      // 重放成功只能清除先前的重放失败，不能清除 WebSocket 断开错误，
-      // 否则每秒执行一次的采样重放循环会让连接警告反复闪烁。
-      setError((current) => current === '消息同步失败，请稍后重试' ? '' : current);
-    } catch { setError('消息同步失败，请稍后重试'); }
-    finally { recoveringRef.current = false; }
-  }, [apiBase, append, roomId]);
+  useEffect(() => {
+    if (!enabled || !roomId) return;
+    lastSeqRef.current = 0;
+    const recovery = new DanmakuRecovery<DanmakuMessage>(
+      async (cursor, signal) => (await api.replay(apiBase, roomId, cursor, 200, signal)).data,
+      items => { append(items); setError(current => current === '消息同步失败，请稍后重试' ? '' : current); },
+      () => setError('消息同步失败，请稍后重试'),
+    );
+    recoveryRef.current = recovery;
+    return () => { recovery.stop(); recoveryRef.current = null; };
+  }, [apiBase, roomId, append, enabled]);
+  const recover = useCallback((afterSeq = lastSeqRef.current, target = 0) => {
+    recoveryRef.current?.request(afterSeq, target);
+  }, []);
 
   // 消息和恢复回调可能随房间状态变化，但这些变化不应断开健康的套接字。
   // 连接副作用应只依赖于标识连接本身的值。
@@ -201,7 +196,11 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
               setOnlineCount(Number(message.data?.online_count || 0));
               applyLikeCountRef.current(Number(message.data?.like_count || 0));
             } else if (subtype === 'delivery_policy') {
-              setDeliveryMode(message.data?.delivery_mode === 'sampled' ? 'sampled' : 'push');
+              const sampled = message.data?.delivery_mode === 'sampled';
+              // First-time viewers start at the advertised live position; existing viewers recover their gap.
+              const after = lastSeqRef.current > 0 ? Math.min(lastSeqRef.current, Number(message.data?.replay_after_seq ?? lastSeqRef.current)) : Number(message.room_seq ?? 0);
+              recoveryRef.current?.mode(sampled, after);
+              setDeliveryMode(sampled ? 'sampled' : 'push');
             } else if (subtype === 'room_status') {
               // A delayed end notification may belong to a previous session.
               // Read the current room before applying it to this connection.
@@ -210,7 +209,7 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
               }).catch(() => {});
             }
           } else if (message.type === 'resync_required') {
-            void recoverRef.current(Number(message.after_seq || lastSeqRef.current));
+            void recoverRef.current(Number(message.after_seq ?? lastSeqRef.current), Number(message.latest_seq ?? 0));
           } else if (message.type === 'accepted') {
             if (message.message_id && pendingLikesRef.current.has(message.message_id)) {
               pendingLikesRef.current.set(message.message_id, true);
@@ -286,12 +285,6 @@ export function useLiveRoom(apiBase: string, roomId: number, enabled: boolean, i
       }
     };
   }, [apiBase, enabled, roomId]);
-
-  useEffect(() => {
-    if (!enabled || deliveryMode !== 'sampled') return;
-    const timer = setInterval(() => void recover(lastSeqRef.current), 1000);
-    return () => clearInterval(timer);
-  }, [deliveryMode, enabled, recover]);
 
   const send = useCallback((type: 'danma' | 'like', content = '') => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {

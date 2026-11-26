@@ -155,6 +155,10 @@ func TestLikeUpdateBroadcastsCombinedLatestRoomState(t *testing.T) {
 		},
 	})
 
+	if len(client.state) != 0 {
+		t.Fatal("like update bypassed coalescing")
+	}
+	hub.broadcastOnlineCount(1)
 	room := hub.rooms[1]
 	room.mu.RLock()
 	likeCount := room.likeCount
@@ -255,8 +259,8 @@ func TestQueueFullAllowsBurstThenClosesPersistentSlowClient(t *testing.T) {
 	if !client.isClosing() {
 		t.Fatal("persistently queue-full client was not marked closing")
 	}
-	if got := len(hub.unregister); got != 1 {
-		t.Fatalf("unregister signals = %d, want 1", got)
+	if got := len(hub.closeQueue); got != 1 {
+		t.Fatalf("close requests = %d, want 1", got)
 	}
 }
 
@@ -466,16 +470,26 @@ func TestHotRoomPolicySamplesOnlyAfterFanoutBudgetIsExceeded(t *testing.T) {
 	if !deliver || policy != nil {
 		t.Fatalf("first event deliver=%v policy=%+v, want full push without transition", deliver, policy)
 	}
-	deliver, policy = hub.planDanmaDelivery(
-		Message{RoomID: 7, RoomSeq: 2},
-		startedAt.Add(500*time.Millisecond),
-	)
-	if policy == nil || policy.sampleStride <= 1 || !policy.hot {
-		t.Fatalf("fanout overload did not enter sampled hot mode: %+v", policy)
+	deliver, policy = hub.planDanmaDelivery(Message{RoomID: 7, RoomSeq: 2}, startedAt.Add(500*time.Millisecond))
+	if !deliver || policy != nil {
+		t.Fatal("short burst triggered sampling")
 	}
-	if deliver {
-		t.Fatal("sampled event unexpectedly selected for delivery")
+	for second := 1; second <= 5; second++ {
+		for n := 0; n < 20; n++ {
+			hub.planDanmaDelivery(Message{RoomID: 7, RoomSeq: uint64(second*20 + n)}, startedAt.Add(time.Duration(second)*time.Second-time.Millisecond))
+		}
+		hub.evaluatePolicies(startedAt.Add(time.Duration(second) * time.Second))
 	}
+	if hub.rooms[7].policy.sampleStride <= 1 {
+		t.Fatal("sustained overload did not sample")
+	}
+	for second := 6; second <= 40; second++ {
+		hub.evaluatePolicies(startedAt.Add(time.Duration(second) * time.Second))
+	}
+	if hub.rooms[7].policy.sampleStride != 1 {
+		t.Fatal("idle room remained sampled")
+	}
+
 }
 
 func TestHotRoomDropsOldestAtHighWatermark(t *testing.T) {
@@ -515,7 +529,7 @@ func TestRoomStatusUpdateBroadcastsToConnectedClients(t *testing.T) {
 		},
 	})
 
-	if got := len(client.state); got != 1 {
+	if got := len(client.control); got != 1 {
 		t.Fatalf("room status frames = %d, want 1", got)
 	}
 }

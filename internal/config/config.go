@@ -38,6 +38,18 @@ func LoadConfig() *model.Config {
 	configPath := filepath.Join(root, "config", "config.yaml")
 	v := viper.New()
 	v.SetConfigFile(configPath)
+	v.SetDefault("danmaku.hot_room.enter_windows", 3)
+	v.SetDefault("danmaku.hot_room.exit_windows", 5)
+	v.SetDefault("danmaku.hot_room.hold_seconds", 10)
+
+	v.SetDefault("danmaku.replay.max_inflight", 8)
+	v.SetDefault("danmaku.replay.max_inflight_per_room", 4)
+	v.SetDefault("danmaku.replay.requests_per_second", 64)
+	v.SetDefault("danmaku.replay.burst", 16)
+	v.SetDefault("danmaku.replay.timeout_milliseconds", 1000)
+	v.SetDefault("danmaku.replay.max_page_size", 200)
+	v.SetDefault("danmaku.replay.max_mysql_inflight", 2)
+
 	v.SetDefault("danmaku.recent_cache.size", 1000)
 	v.SetDefault("danmaku.recent_cache.ttl_seconds", 300)
 	v.SetDefault("danmaku.hot_room.adaptive_sampling_enabled", true)
@@ -77,4 +89,35 @@ func LoadConfig() *model.Config {
 	}
 	GlobalConfig = &cfg
 	return GlobalConfig
+}
+
+// ReplaySettings supplies positive defaults for programmatic configurations too.
+func ReplaySettings() model.ReplayConfig {
+	var c model.ReplayConfig
+	if GlobalConfig != nil {
+		c = GlobalConfig.Danmaku.Replay
+	}
+	if c.MaxInflight <= 0 {
+		c.MaxInflight = 8
+	}
+	if c.MaxInflightPerRoom <= 0 {
+		c.MaxInflightPerRoom = 4
+	}
+	if c.RequestsPerSecond <= 0 {
+		c.RequestsPerSecond = 64
+	}
+	if c.Burst <= 0 {
+		c.Burst = 16
+	}
+	if c.TimeoutMilliseconds <= 0 {
+		c.TimeoutMilliseconds = 1000
+	}
+	if c.MaxPageSize <= 0 {
+		c.MaxPageSize = 200
+	}
+	if c.MaxMysqlInflight <= 0 {
+		c.MaxMysqlInflight = 2
+	}
+
+	return c
 }

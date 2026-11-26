@@ -59,6 +59,9 @@ type realtimeDurationSnapshot struct {
 }
 
 type realtimeKafkaMetrics struct {
+	redisAttempt     realtimeDurationHistogram
+	fetchHandoff     realtimeDurationHistogram
+	redisFailures    atomic.Uint64
 	messageAge       realtimeDurationHistogram
 	producerWrite    realtimeDurationHistogram
 	redisPublish     realtimeDurationHistogram
@@ -74,6 +77,9 @@ type realtimeKafkaMetrics struct {
 var realtimeMetrics realtimeKafkaMetrics
 
 type RealtimeMetricsSnapshot struct {
+	RedisAttempt     realtimeDurationSnapshot `json:"kafka_realtime_redis_attempt_duration"`
+	FetchHandoff     realtimeDurationSnapshot `json:"kafka_realtime_fetch_handoff_duration"`
+	RedisFailures    uint64                   `json:"kafka_realtime_redis_failures_total"`
 	FetchedTotal     uint64                   `json:"kafka_realtime_fetched_total"`
 	PublishedTotal   uint64                   `json:"kafka_realtime_published_total"`
 	CommitBatchTotal uint64                   `json:"kafka_realtime_commit_batch_total"`
@@ -88,6 +94,7 @@ type RealtimeMetricsSnapshot struct {
 
 func RealtimeMetrics() RealtimeMetricsSnapshot {
 	return RealtimeMetricsSnapshot{
+		RedisAttempt: snapshotRealtimeDuration(&realtimeMetrics.redisAttempt), FetchHandoff: snapshotRealtimeDuration(&realtimeMetrics.fetchHandoff), RedisFailures: realtimeMetrics.redisFailures.Load(),
 		FetchedTotal:     realtimeMetrics.fetchedTotal.Load(),
 		PublishedTotal:   realtimeMetrics.publishedTotal.Load(),
 		CommitBatchTotal: realtimeMetrics.commitBatchTotal.Load(),

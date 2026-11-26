@@ -10,17 +10,22 @@ import (
 const policyRateWindow = time.Second
 
 type adaptiveSettings struct {
-	samplingEnabled    bool
-	hotOnlineThreshold int
-	maxFanoutPerSecond int64
-	maxSampleStride    int
-	hotPresencePeriod  time.Duration
-	queueHighWatermark int
-	slowStrikeLimit    uint32
-	slowGrace          time.Duration
+	enterWindows, exitWindows int
+	holdPeriod                time.Duration
+	samplingEnabled           bool
+	hotOnlineThreshold        int
+	maxFanoutPerSecond        int64
+	maxSampleStride           int
+	hotPresencePeriod         time.Duration
+	queueHighWatermark        int
+	slowStrikeLimit           uint32
+	slowGrace                 time.Duration
 }
 
 type roomAdaptiveState struct {
+	above, below  int
+	changedAt     time.Time
+	replayAfter   uint64
 	windowStarted time.Time
 	windowCount   uint64
 	sampleCounter uint64
@@ -39,10 +44,12 @@ type deliveryPolicySnapshot struct {
 	fanoutQPS    float64
 	sampleStride int
 	latestSeq    uint64
+	replayAfter  uint64
 }
 
 func loadAdaptiveSettings() adaptiveSettings {
 	settings := adaptiveSettings{
+		enterWindows: 3, exitWindows: 5, holdPeriod: 10 * time.Second,
 		samplingEnabled:    true,
 		hotOnlineThreshold: 5000,
 		maxFanoutPerSecond: 150000,
@@ -56,6 +63,15 @@ func loadAdaptiveSettings() adaptiveSettings {
 		return settings
 	}
 	cfg := config.GlobalConfig.Danmaku
+	if cfg.HotRoom.EnterWindows > 0 {
+		settings.enterWindows = cfg.HotRoom.EnterWindows
+	}
+	if cfg.HotRoom.ExitWindows > 0 {
+		settings.exitWindows = cfg.HotRoom.ExitWindows
+	}
+	if cfg.HotRoom.HoldSeconds > 0 {
+		settings.holdPeriod = time.Duration(cfg.HotRoom.HoldSeconds) * time.Second
+	}
 	settings.samplingEnabled = cfg.HotRoom.AdaptiveSamplingEnabled
 	if cfg.HotRoom.OnlineThreshold > 0 {
 		settings.hotOnlineThreshold = cfg.HotRoom.OnlineThreshold
@@ -102,41 +118,90 @@ func (h *Hub) planDanmaDelivery(message Message, now time.Time) (bool, *delivery
 	if message.RoomSeq > state.latestSeq {
 		state.latestSeq = message.RoomSeq
 	}
-	elapsed := now.Sub(state.windowStarted)
-	policyChanged := false
-	if elapsed >= policyRateWindow/2 {
-		sourceQPS := float64(state.windowCount) / elapsed.Seconds()
-		fanoutQPS := sourceQPS * float64(len(room.clients))
-		stride := 1
-		if h.adaptive.samplingEnabled && h.adaptive.maxFanoutPerSecond > 0 && fanoutQPS > float64(h.adaptive.maxFanoutPerSecond) {
-			stride = int(math.Ceil(fanoutQPS / float64(h.adaptive.maxFanoutPerSecond)))
-			if stride > h.adaptive.maxSampleStride {
-				stride = h.adaptive.maxSampleStride
-			}
-		}
-		hot := len(room.clients) >= h.adaptive.hotOnlineThreshold || stride > 1
-		policyChanged = hot != state.hot || stride != state.sampleStride
-		state.hot = hot
-		state.sourceQPS = sourceQPS
-		state.fanoutQPS = fanoutQPS
-		state.sampleStride = stride
-	}
-	if elapsed >= policyRateWindow {
-		state.windowStarted = now
-		state.windowCount = 0
-	}
-
 	deliver := state.sampleStride <= 1 || state.sampleCounter%uint64(state.sampleStride) == 0
-	if !policyChanged {
-		return deliver, nil
+	if state.sampleStride <= 1 {
+		state.replayAfter = message.RoomSeq
 	}
-	return deliver, &deliveryPolicySnapshot{
-		roomID:       message.RoomID,
-		hot:          state.hot,
-		sourceQPS:    state.sourceQPS,
-		fanoutQPS:    state.fanoutQPS,
-		sampleStride: state.sampleStride,
-		latestSeq:    state.latestSeq,
+	return deliver, nil
+}
+
+func (h *Hub) adaptiveWorker() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-h.ctx.Done():
+			return
+		case now := <-ticker.C:
+			h.evaluatePolicies(now)
+		}
+	}
+}
+
+func (h *Hub) evaluatePolicies(now time.Time) {
+	h.mu.Lock()
+	rooms := make(map[uint64]*Room, len(h.rooms))
+	for id, r := range h.rooms {
+		rooms[id] = r
+	}
+	h.mu.Unlock()
+	for id, r := range rooms {
+		r.mu.Lock()
+		s := &r.policy
+		if s.windowStarted.IsZero() {
+			s.windowStarted = now
+			s.sampleStride = 1
+			r.mu.Unlock()
+			continue
+		}
+		elapsed := now.Sub(s.windowStarted).Seconds()
+		if elapsed < 1 {
+			r.mu.Unlock()
+			continue
+		}
+		s.sourceQPS = float64(s.windowCount) / elapsed
+		current := s.sourceQPS * float64(len(r.clients))
+		s.fanoutQPS = .25*current + .75*s.fanoutQPS
+		s.windowCount = 0
+		s.windowStarted = now
+		old := s.sampleStride
+		budget := float64(h.adaptive.maxFanoutPerSecond)
+		if s.fanoutQPS > budget {
+			s.above++
+		} else {
+			s.above = 0
+		}
+		if s.fanoutQPS < budget*.7 {
+			s.below++
+		} else {
+			s.below = 0
+		}
+		stride := int(math.Ceil(s.fanoutQPS / budget))
+		if stride < 2 {
+			stride = 2
+		}
+		if stride > h.adaptive.maxSampleStride {
+			stride = h.adaptive.maxSampleStride
+		}
+		if !h.adaptive.samplingEnabled {
+			s.sampleStride = 1
+		} else if old <= 1 && s.above >= h.adaptive.enterWindows {
+			s.sampleStride = stride
+			s.changedAt = now
+		} else if old > 1 && now.Sub(s.changedAt) >= h.adaptive.holdPeriod {
+			if s.below >= h.adaptive.exitWindows {
+				s.sampleStride = 1
+			} else {
+				s.sampleStride = stride
+			}
+			s.changedAt = now
+		}
+		s.hot = len(r.clients) >= h.adaptive.hotOnlineThreshold || s.sampleStride > 1
+		policy := deliveryPolicySnapshot{roomID: id, hot: s.hot, sourceQPS: s.sourceQPS, fanoutQPS: s.fanoutQPS, sampleStride: s.sampleStride, latestSeq: s.latestSeq, replayAfter: s.replayAfter}
+		r.mu.Unlock()
+		if old != policy.sampleStride {
+			h.broadcastDeliveryPolicy(policy)
+		}
 	}
 }
 
@@ -164,7 +229,8 @@ func deliveryPolicyMessage(policy deliveryPolicySnapshot) *model.Message {
 			"source_qps":       policy.sourceQPS,
 			"fanout_qps":       policy.fanoutQPS,
 			"sample_stride":    policy.sampleStride,
-			"poll_interval_ms": 1000,
+			"poll_interval_ms": 4000,
+			"replay_after_seq": policy.replayAfter,
 		},
 	}
 }

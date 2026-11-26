@@ -22,7 +22,7 @@ import type {
   Page, CommentReview, CommentReport,
 } from '@/lib/types';
 export class ApiError extends Error {
-  constructor(message: string, public status: number) { super(message); }
+  constructor(message: string, public status: number, public retryAfterMilliseconds = 0) { super(message); }
 }
 
 export async function request<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
@@ -41,7 +41,7 @@ export async function request<T>(baseUrl: string, path: string, init?: RequestIn
     throw new ApiError('暂时无法加载内容，请稍后重试', 0);
   }
   const body = await response.json().catch(() => ({ message: `HTTP ${response.status}` })) as { message?: string; msg?: string };
-  if (!response.ok) throw new ApiError(body.message || body.msg || '请求失败', response.status);
+  if (!response.ok) throw new ApiError(body.message || body.msg || '请求失败', response.status, Math.max(0, Number(response.headers.get('Retry-After') || 0) * 1000));
   return body as T;
 }
 
@@ -146,7 +146,7 @@ export const api = {
   startRoom: (base: string, id: number, title: string) => request<ApiEnvelope<{session_id:string;status:string;server:string;stream_key:string;expires_at:string}>>(base, `/api/v1/rooms/${id}/start`, { method: 'POST', body: JSON.stringify({ room_title: title }) }),
   stopRoom: (base: string, id: number) => request<{ message: string }>(base, `/api/v1/rooms/${id}/stop`, { method: 'POST', body: '{}' }),
   history: (base: string, id: number, before = 0, limit = 50) => request<ApiEnvelope<HistoryPage>>(base, `/api/v1/rooms/${id}/messages?before_id=${before}&limit=${limit}`),
-  replay: (base: string, id: number, afterSeq: number, limit = 200) => request<ApiEnvelope<ReplayPage>>(base, `/api/v1/rooms/${id}/messages/replay?after_seq=${afterSeq}&limit=${limit}`),
+  replay: (base: string, id: number, afterSeq: number, limit = 200, signal?: AbortSignal) => request<ApiEnvelope<ReplayPage>>(base, `/api/v1/rooms/${id}/messages/replay?after_seq=${afterSeq}&limit=${limit}`, {signal}),
 
   liveFeed: (
     base: string,

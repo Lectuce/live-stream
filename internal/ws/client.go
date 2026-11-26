@@ -109,7 +109,7 @@ func (c *Client) trySendData(
 ) enqueueResult {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
-	if c.sendClosed {
+	if c.sendClosed || c.closing.Load() {
 		return enqueueClosed
 	}
 	frame := outboundFrame{message: message, roomSeq: roomSeq, enqueuedAt: time.Now()}
@@ -152,7 +152,7 @@ func (c *Client) trySendData(
 func (c *Client) trySendControl(message *websocket.PreparedMessage) enqueueResult {
 	c.sendMu.RLock()
 	defer c.sendMu.RUnlock()
-	if c.sendClosed {
+	if c.sendClosed || c.closing.Load() {
 		return enqueueClosed
 	}
 	select {
@@ -166,7 +166,7 @@ func (c *Client) trySendControl(message *websocket.PreparedMessage) enqueueResul
 func (c *Client) replaceState(message *websocket.PreparedMessage) enqueueResult {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
-	if c.sendClosed {
+	if c.sendClosed || c.closing.Load() {
 		return enqueueClosed
 	}
 	select {
@@ -233,23 +233,15 @@ func (c *Client) signalUnregister() {
 }
 
 func (c *Client) closeConnection() {
-	c.closeConnectionWithReason(0, "")
-}
-
-func (c *Client) closeConnectionWithReason(code int, reason string) {
+	c.closing.Store(true)
 	c.closeOnce.Do(func() {
-		c.closing.Store(true)
 		if c.conn != nil {
-			if code != 0 {
-				_ = c.conn.WriteControl(
-					websocket.CloseMessage,
-					websocket.FormatCloseMessage(code, reason),
-					time.Now().Add(time.Second),
-				)
-			}
 			_ = c.conn.Close()
 		}
 	})
+}
+func (c *Client) closeConnectionWithReason(code int, reason string) {
+	c.hub.requestClientClose(c, code, reason)
 }
 
 func (c *Client) isClosing() bool {
@@ -526,7 +518,32 @@ func (c *Client) writePump() {
 		return true
 	}
 
+	priorityBurst := 0
 	for dataChannel != nil || controlChannel != nil || stateChannel != nil {
+		select {
+		case <-ticker.C:
+			if c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)) != nil {
+				return
+			}
+		default:
+		}
+		if priorityBurst >= 8 {
+			select {
+			case frame, ok := <-dataChannel:
+				if !ok {
+					dataChannel = nil
+				} else {
+					c.hub.metrics.clientQueueWaitDuration.observe(time.Since(frame.enqueuedAt))
+					if !writePrepared(frame.message, true) {
+						return
+					}
+					c.lastWrittenSeq.Store(frame.roomSeq)
+				}
+			default:
+			}
+			priorityBurst = 0
+		}
+		priorityBurst++
 		// 控制消息不能排在数百条过期弹幕后等待。
 		if controlChannel != nil {
 			select {
